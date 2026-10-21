@@ -258,7 +258,7 @@ const MapScreen = () => {
       }
 
       const result = await ImagePicker.launchCameraAsync({ allowsEditing: true, quality: 0.7, base64: true });
-      if (!result.cancelled) {
+      if (!result.canceled) {
         const asset = result.assets?.[0];
         if (!asset || !asset.base64) {
           Alert.alert("Error", "Image capture failed or base64 not found.");

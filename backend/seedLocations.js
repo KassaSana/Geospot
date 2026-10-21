@@ -1,5 +1,5 @@
 const mongoose = require('mongoose');
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
 const LocationModel = require('./models/Location');
 
 const locations = [
@@ -28,10 +28,7 @@ const locations = [
 
 async function seed() {
   try {
-    await mongoose.connect(process.env.MONGO_URI, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-    });
+    await mongoose.connect(process.env.MONGO_URI);
 
     await LocationModel.deleteMany(); 
     await LocationModel.insertMany(locations);

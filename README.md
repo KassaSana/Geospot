@@ -30,11 +30,9 @@ You’ll be running the frontend using **Expo Go** on your phone or using the we
 
 ### 🔧 Initial Setup (One-Time)
 
-> If you haven’t already:
+Use **Node 24** (see `.nvmrc`; Node 22.13+ also works). No global Expo install is needed — `npx expo` uses the project's own version.
 
-```bash
-npm install -g expo-cli
-```
+The app targets **Expo SDK 58**, so install the current **Expo Go** from the App Store / Play Store.
 
 ---
 

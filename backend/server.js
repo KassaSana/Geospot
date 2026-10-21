@@ -3,8 +3,8 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const UserModel = require('./models/user.model');
 const PostModel = require('./models/post.model');
-require('dotenv').config();
-const { v4: uuidv4 } = require('uuid');
+require('dotenv').config({ quiet: true });
+const { randomUUID } = require('crypto');
 const cloudinary = require('./cloudinary');
 const feedRoutes = require('./routes/feed.routes');
 const userRoutes = require('./routes/user.routes');
@@ -24,6 +24,11 @@ app.use(cors({
 }));
 
 app.use(express.json({ limit: '10mb' }));
+// Express 5 leaves req.body undefined when there is no JSON body; keep the Express 4 behavior
+app.use((req, res, next) => {
+  req.body ??= {};
+  next();
+});
 app.use('/api/feed', feedRoutes);
 app.use('/api/users/search', userRoutes);
 app.use('/api/locations', locationsRouter);
@@ -59,7 +64,7 @@ mongoose.connect(process.env.MONGO_URI)
         username, 
         email, 
         password: hashedPassword, 
-        uid: uuidv4(),
+        uid: randomUUID(),
         profilePicture:"https://res.cloudinary.com/dbmpdoet6/image/upload/v1744226231/jxz9tcyulimodvceq47f.png",
         userLevel: 0,          
         spotsVisited: 0,
@@ -90,7 +95,7 @@ mongoose.connect(process.env.MONGO_URI)
           petName: "",       
           petCurrency: 0          
         },
-        { new: true }
+        { returnDocument: 'after' }
       );
   
       if (user) {
@@ -151,7 +156,7 @@ app.post('/updatePetName', async (req, res) => {
     const user = await UserModel.findOneAndUpdate(
       { email },
       { petName: petName },
-      { new: true }
+      { returnDocument: 'after' }
     );
     if (user) {
       res.json({ message: "Pet name updated", user });
@@ -355,7 +360,7 @@ app.post('/updateProfilePicture', async (req, res) => {
     const user = await UserModel.findOneAndUpdate(
       { email },
       { profilePicture: uploadResponse.secure_url },
-      { new: true }
+      { returnDocument: 'after' }
     );
 
     if (user) {
@@ -378,7 +383,7 @@ app.post('/updateProfile', async (req, res) => {
     const user = await UserModel.findOneAndUpdate(
       { email },
       { username, bio },
-      { new: true }
+      { returnDocument: 'after' }
     );
 
     if (user) {
