@@ -23,6 +23,17 @@ function getDistanceInMiles(lat1, lon1, lat2, lon2) {
 }
 
 
+async function fetchWalkingRoute(from, to) {
+  const origin = `${from.latitude},${from.longitude}`;
+  const dest = `${to.latitude},${to.longitude}`;
+  const response = await fetch(
+    `https://geospotbackend.onrender.com/directions?origin=${origin}&destination=${dest}`
+  );
+  const data = await response.json();
+  if (!data.points) return [];
+  return polyline.decode(data.points).map(([lat, lng]) => ({ latitude: lat, longitude: lng }));
+}
+
 const MapScreen = () => {
   const [location, setLocation] = useState(null);
   const [destination, setDestination] = useState({
@@ -34,11 +45,8 @@ const MapScreen = () => {
   const [modalVisible, setModalVisible] = useState(false);
   const [hintText, setHintText] = useState('This is your hint! 🌟');
   const [routeCoords, setRouteCoords] = useState([]);
-  const [user, setUser] = useState(null);
   const [customRevealTime, setCustomRevealTime] = useState(null);
   const [availableLocations, setAvailableLocations] = useState([]);
-  const [distanceToDestination, setDistanceToDestination] = useState(null);
-  const [isUsingCachedData, setIsUsingCachedData] = useState(false);
   const [offlineMode, setOfflineMode] = useState(false);
   const [offlineModalVisible, setOfflineModalVisible] = useState(false);
   const [lastCacheUpdateTime, setLastCacheUpdateTime] = useState(null);
@@ -88,17 +96,9 @@ const MapScreen = () => {
     })();
   }, []);
 
-  useEffect(() => {
-    if (location && destination) {
-      const miles = getDistanceInMiles(
-        location.latitude,
-        location.longitude,
-        destination.latitude,
-        destination.longitude
-      );
-      setDistanceToDestination(miles);
-    }
-  }, [location, destination]);
+  const distanceToDestination = location && destination
+    ? getDistanceInMiles(location.latitude, location.longitude, destination.latitude, destination.longitude)
+    : null;
 
   useEffect(() => {
     const fetchLocations = async () => {
@@ -115,7 +115,6 @@ const MapScreen = () => {
         // Cache the fresh data
         await cacheLocations(data);
         setAvailableLocations(data);
-        setIsUsingCachedData(false);
         setOfflineMode(false);
         
       } catch (err) {
@@ -126,7 +125,6 @@ const MapScreen = () => {
         if (cachedLocations && cachedLocations.length > 0) {
           console.log('Using cached locations data:', cachedLocations);
           setAvailableLocations(cachedLocations);
-          setIsUsingCachedData(true);
           setOfflineMode(true);
           setOfflineModalVisible(true);
         } else {
@@ -152,7 +150,6 @@ const MapScreen = () => {
           ];
           
           setAvailableLocations(fallbackLocations);
-          setIsUsingCachedData(true);
           setOfflineMode(true);
           setOfflineModalVisible(true);
           
@@ -183,7 +180,6 @@ const MapScreen = () => {
       
       await cacheLocations(data);
       setAvailableLocations(data);
-      setIsUsingCachedData(false);
       setOfflineModalVisible(false);
       Alert.alert('Connected', 'Successfully refreshed data from server');
       
@@ -193,18 +189,29 @@ const MapScreen = () => {
     }
   };
 
+
   useEffect(() => {
-    if (isRevealed && location && destination) {
-      fetchRoute();
-    }
-  }, [isRevealed, location, destination]); 
-  
-  useEffect(() => {
-    if (!isRevealed) {
-      setRouteCoords([]);
-    }
-  }, [isRevealed]);
-  
+    if (!isRevealed || !location || !destination) return;
+
+    let cancelled = false;
+    fetchWalkingRoute(location, destination)
+      .then(async (coords) => {
+        if (!coords.length) {
+          console.warn('No route found');
+          return;
+        }
+        // Animate the route in one point at a time
+        for (let i = 1; i <= coords.length && !cancelled; i++) {
+          setRouteCoords(coords.slice(0, i));
+          await new Promise((res) => setTimeout(res, 20));
+        }
+      })
+      .catch((err) => console.error('Failed to fetch directions:', err));
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isRevealed, location, destination]);
 
   useEffect(() => {
     const updateTimer = () => {
@@ -216,14 +223,15 @@ const MapScreen = () => {
       })();
   
       if (now >= revealTime) {
-        if (!isRevealed) setIsRevealed(true); 
+        setIsRevealed(true);
         setTimeUntilReveal("📍 Today's spot is revealed!");
       } else {
         const diff = revealTime - now;
         const hrs = Math.floor(diff / (1000 * 60 * 60));
         const mins = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
         const secs = Math.floor((diff % (1000 * 60)) / 1000);
-        setTimeUntilReveal(`🕒 ${hrs}:${mins}:${secs} until reveal`);
+        const pad = (n) => String(n).padStart(2, '0');
+        setTimeUntilReveal(`🕒 ${hrs}:${pad(mins)}:${pad(secs)} until reveal`);
       }
       
     };
@@ -233,21 +241,6 @@ const MapScreen = () => {
     return () => clearInterval(interval);
   }, [customRevealTime]);
   
-
-  useEffect(() => {
-    const fetchUser = async () => {
-      try {
-        if (!user) {
-          const storedUser = await AsyncStorage.getItem('user');
-          if (storedUser) setUser(JSON.parse(storedUser));
-          else console.warn('⚠️ No user stored in AsyncStorage');
-        }
-      } catch (err) {
-        console.error('Failed to load user from storage:', err);
-      }
-    };
-    fetchUser();
-  }, []);
 
   const handlePickImage = async () => {
     try {
@@ -305,38 +298,6 @@ const MapScreen = () => {
     console.log('🔁 Teleported to destination:', destination);
   };
 
-  const fetchRoute = async () => {
-    if (!location || !destination) return;
-  
-    const origin = `${location.latitude},${location.longitude}`;
-    const dest = `${destination.latitude},${destination.longitude}`;
-
-    try {
-      const response = await fetch(
-        `https://geospotbackend.onrender.com/directions?origin=${origin}&destination=${dest}`
-      );
-      const data = await response.json();
-
-      if (data.points) {
-        const points = polyline.decode(data.points);
-        const coords = points.map(([lat, lng]) => ({ latitude: lat, longitude: lng }));
-  
-        // Animate the route in one by one
-        let current = [];
-        for (let i = 0; i < coords.length; i++) {
-          current.push(coords[i]);
-          setRouteCoords([...current]); // Force re-render
-          await new Promise((res) => setTimeout(res, 20)); // Adjust speed here
-        }
-      } else {
-        console.warn('No route found');
-      }
-    } catch (err) {
-      console.error('Failed to fetch directions:', err);
-    }
-  };
-  
-
   const changeToRandomLocation = async () => {
     if (availableLocations.length === 0) {
       console.warn('⚠️ No available locations to switch to!');
@@ -362,15 +323,6 @@ const MapScreen = () => {
         setHintText(next.description || 'No hint found for this location');
         setCustomRevealTime(new Date(Date.now() + 5000)); // auto-reveal in 5 sec
   
-        // ✅ Update distance manually
-        const miles = getDistanceInMiles(
-          loc.coords.latitude,
-          loc.coords.longitude,
-          next.coordinates.lat,
-          next.coordinates.lng
-        );
-        setDistanceToDestination(miles);
-  
         Alert.alert("🔁 New destination set!", next.name);
       } else {
         console.warn('⚠️ Chosen location has invalid coordinates:', next);
@@ -385,24 +337,11 @@ const MapScreen = () => {
   
 
   const revealDestinationNow = () => {
-    setIsRevealed(false); 
-    const in10Seconds = new Date(Date.now() + 10000);
-    setCustomRevealTime(in10Seconds);
-  
-    setTimeout(async () => {
-      setIsRevealed(true);
-  
-      // Wait until location is defined 
-      for (let i = 0; i < 5; i++) {
-        if (location && location.latitude && location.longitude) {
-          await fetchRoute();
-          break;
-        }
-        console.warn(`⏱ Waiting for location... try ${i + 1}`);
-        await new Promise((res) => setTimeout(res, 1000));
-      }
-    }, 10000);
+    setIsRevealed(false);
+    setRouteCoords([]);
+    setCustomRevealTime(new Date(Date.now() + 10000));
   };
+
   
   
   
@@ -466,6 +405,7 @@ const MapScreen = () => {
         </TouchableOpacity>
       )}
 
+      {__DEV__ && (
       <View style={styles.testButtonsContainer}>
         <TouchableOpacity style={styles.testButton} onPress={revealDestinationNow}>
           <Text style={styles.testButtonText}> Reveal Destination</Text>
@@ -476,8 +416,8 @@ const MapScreen = () => {
         <TouchableOpacity style={styles.testButton} onPress={changeToRandomLocation}>
           <Text style={styles.testButtonText}> Change Test Location</Text>
         </TouchableOpacity>
-
       </View>
+      )}
 
       <Modal visible={modalVisible} animationType="slide" transparent>
         <View style={styles.modalContainer}>

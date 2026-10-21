@@ -9,6 +9,7 @@ router.get('/', async (req, res) => {
     const locations = await LocationModel.find({});
     res.status(200).json(locations);
   } catch (err) {
+    console.error('Error fetching locations:', err);
     res.status(500).json({ error: 'Failed to fetch locations' });
   }
 });

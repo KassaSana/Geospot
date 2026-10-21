@@ -39,7 +39,14 @@ const UserSchema = new mongoose.Schema({
         type: [String],
         default: [],
       },
-      
 });
+
+// Never send the password hash to clients, whichever route serializes the user
+const hidePassword = (doc, ret) => {
+  delete ret.password;
+  return ret;
+};
+UserSchema.set('toJSON', { transform: hidePassword });
+UserSchema.set('toObject', { transform: hidePassword });
 
 module.exports = mongoose.model("User", UserSchema);

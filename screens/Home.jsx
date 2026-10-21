@@ -1,9 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, Image, TouchableOpacity, Alert, FlatList, StyleSheet, TextInput, Modal } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from '@react-navigation/native';
-import { useCallback } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 
 const Home = ({ navigation }) => {
@@ -14,17 +12,6 @@ const Home = ({ navigation }) => {
   const [commentModalVisible, setCommentModalVisible] = useState(false);
   const [selectedPostId, setSelectedPostId] = useState(null);
   const [showComments, setShowComments] = useState({});
-
-  useEffect(() => {
-    const debugSecureStore = async () => {
-      const user = await SecureStore.getItemAsync('user');
-      const token = await SecureStore.getItemAsync('token');
-
-      console.log("🔍 SecureStore user:", user);
-      console.log("🔍 SecureStore token:", token);
-    };
-    debugSecureStore();
-  }, []);
 
   useEffect(() => {
     const loadUser = async () => {
@@ -40,7 +27,7 @@ const Home = ({ navigation }) => {
     loadUser();
   }, []);
 
-  const fetchPosts = async () => {
+  const fetchPosts = useCallback(async () => {
     try {
       const token = await SecureStore.getItemAsync('token');
       const rawUser = await SecureStore.getItemAsync('user');
@@ -72,12 +59,12 @@ const Home = ({ navigation }) => {
     } catch (error) {
       console.error('Error fetching posts:', error);
     }
-  };
+  }, [activeTab, navigation]);
 
   useFocusEffect(
     useCallback(() => {
       fetchPosts();
-    }, [activeTab])
+    }, [fetchPosts])
   );
 
   const handleLike = async (postId) => {
@@ -196,50 +183,6 @@ const Home = ({ navigation }) => {
       ...prev,
       [postId]: !prev[postId]
     }));
-  };
-
-  const createTestPost = async () => {
-    try {
-      const rawUser = await SecureStore.getItemAsync('user');
-      if (!rawUser) {
-        console.error('User not found in SecureStore');
-        return;
-      }
-  
-      const user = JSON.parse(rawUser);
-      if (!user.email) {
-        console.error('User email is missing');
-        return;
-      }
-  
-      const response = await fetch(`https://geospotbackend.onrender.com/user/${user.email}`);
-      const dbUser = await response.json();
-      if (!dbUser || !dbUser.uid) {
-        console.error('DB user not found');
-        return;
-      }
-  
-      await fetch('https://geospotbackend.onrender.com/createPost', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          userId: dbUser.uid,
-          username: dbUser.username,
-          userProfilePicture: dbUser.profilePicture,
-          imageUrl: 'https://picsum.photos/600/400',
-          description: 'Exploring Gainesville!',
-          location: 'Gainesville',
-          date: new Date(),
-        }),
-      });
-  
-      Alert.alert('Test post created!');
-      fetchPosts(); // Refetch posts to refresh the feed
-    } catch (error) {
-      console.error('Error creating test post:', error);
-    }
   };
 
   return (

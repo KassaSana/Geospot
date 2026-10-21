@@ -1,10 +1,9 @@
 import React, { useState } from "react";
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert } from "react-native";
+import { View, Text, TextInput, TouchableOpacity, StyleSheet } from "react-native";
 import { FontAwesome } from '@expo/vector-icons';
 import { useNavigation } from "@react-navigation/native";
 import axios from "axios";
 import * as SecureStore from 'expo-secure-store';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 
 
@@ -83,7 +82,7 @@ const Login = () => {
 
         <TouchableOpacity onPress={() => navigation.navigate('SignUp')}>
             <Text style={styles.link}>
-                Don't have an account? Sign up
+                Don&apos;t have an account? Sign up
             </Text>
         </TouchableOpacity>
 

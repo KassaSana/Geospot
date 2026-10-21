@@ -1,12 +1,10 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useRef, useCallback } from "react";
 import { View, Text, Image, StyleSheet, ScrollView, TouchableOpacity, Modal, TextInput } from "react-native";
-import { useRoute, useNavigation } from "@react-navigation/native";
+import { useRoute, useNavigation, useFocusEffect } from "@react-navigation/native";
 import { Ionicons } from '@expo/vector-icons';
 import axios from "axios";
 import * as ImagePicker from 'expo-image-picker';
 import * as SecureStore from 'expo-secure-store';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useIsFocused } from '@react-navigation/native';
 
 
 const UserProfilePage = () => {
@@ -16,7 +14,6 @@ const UserProfilePage = () => {
   const [selectedPhoto, setSelectedPhoto] = useState(null);
   const [modalVisible, setModalVisible] = useState(false);
   const [bioInput, setBioInput] = useState('');
-  const [editingBio, setEditingBio] = useState(false);
   const [editProfileModalVisible, setEditProfileModalVisible] = useState(false);
   const [usernameInput, setUsernameInput] = useState('');
   const [settingsModalVisible, setSettingsModalVisible] = useState(false);
@@ -29,7 +26,6 @@ const UserProfilePage = () => {
   const debounceTimeout = useRef(null);
   const navigation = useNavigation();
   const [isOwnProfile, setIsOwnProfile] = useState(false);
-  const [currentUserUid, setCurrentUserUid] = useState(null);
   const [isFollowingViewedUser, setIsFollowingViewedUser] = useState(false);
   const [followersModalVisible, setFollowersModalVisible] = useState(false);
   const [followingModalVisible, setFollowingModalVisible] = useState(false);
@@ -37,21 +33,8 @@ const UserProfilePage = () => {
   const route = useRoute();
   const viewedEmail = route.params?.email;
 
-  const isFocused = useIsFocused();
 
-  useEffect(() => {
-    if (isFocused && viewedEmail) {
-      fetchUserData(); 
-    }
-  }, [isFocused, viewedEmail]);
-
-  const fetchUserData = async () => {
-    if (!viewedEmail) {
-      setError("No email provided.");
-      setLoading(false);
-      return;
-    }
-  
+  const fetchUserData = useCallback(async () => {
     try {
       const rawUser = await SecureStore.getItemAsync('user');
       if (!rawUser) {
@@ -62,8 +45,6 @@ const UserProfilePage = () => {
 
       const currentUserParsed = JSON.parse(rawUser);
       const currentUserEmail = currentUserParsed?.email;
-      const currentUid = currentUserParsed?.uid;
-      setCurrentUserUid(currentUid);
       setIsOwnProfile(currentUserEmail === viewedEmail);
   
       // Fetch viewed user
@@ -121,14 +102,15 @@ const UserProfilePage = () => {
     } finally {
       setLoading(false);
     }
-  };
-  
+  }, [viewedEmail, navigation]);
 
-  useEffect(() => {
-    if (viewedEmail) {
-      fetchUserData();
-    }
-  }, [viewedEmail]);
+  useFocusEffect(
+    useCallback(() => {
+      if (viewedEmail) {
+        fetchUserData();
+      }
+    }, [viewedEmail, fetchUserData])
+  );
   
   
   const pickImage = async () => {
@@ -333,7 +315,6 @@ const handleUnfollow = async (targetUserId) => {
 const handleLogout = async () => {
   try {
     await SecureStore.deleteItemAsync('user');
-    await AsyncStorage.removeItem('userUid');
     navigation.replace('Login');
   } catch (error) {
     console.error("Error during logout:", error);
@@ -341,6 +322,10 @@ const handleLogout = async () => {
 };
 
   
+  if (!viewedEmail) {
+    return <Text>No email provided.</Text>;
+  }
+
   if (loading) {
     return <Text>Loading...</Text>;
   }

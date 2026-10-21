@@ -1,15 +1,10 @@
 const express = require('express');
-const mongoose = require('mongoose');
 const cors = require('cors');
 const UserModel = require('./models/user.model');
 const PostModel = require('./models/post.model');
-require('dotenv').config({ quiet: true });
 const { randomUUID } = require('crypto');
 const cloudinary = require('./cloudinary');
-const feedRoutes = require('./routes/feed.routes');
-const userRoutes = require('./routes/user.routes');
 const { getUserProfile } = require('./controllers/user.controller');
-const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const locationsRouter = require('./routes/locations');
 
@@ -29,16 +24,7 @@ app.use((req, res, next) => {
   req.body ??= {};
   next();
 });
-app.use('/api/feed', feedRoutes);
-app.use('/api/users/search', userRoutes);
 app.use('/api/locations', locationsRouter);
-
-
-
-
-mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log('MongoDB connected'))
-  .catch((err) => console.error('MongoDB connection error:', err));
 
   app.post('/signup', async (req, res) => {
     try {
@@ -478,19 +464,6 @@ app.get('/following/:userId', async (req, res) => {
   }
 });
 
-app.get('/getCurrentUserEmail', (req, res) => {
-  try {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) return res.status(401).json({ message: 'No token provided' });
-
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    res.json({ email: decoded.email, uid: decoded.uid });
-  } catch (error) {
-    console.error("Error decoding token:", error);
-    res.status(500).json({ message: "Failed to decode token", error: error.message });
-  }
-});
-
 app.get('/userPosts/:uid', async (req, res) => {
   try {
     const posts = await PostModel.find({ userId: req.params.uid }).sort({ date: -1 });
@@ -618,7 +591,4 @@ app.get('/directions', async (req, res) => {
   }
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(` Server running on port ${PORT}`);
-});
+module.exports = app;
