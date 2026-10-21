@@ -74,6 +74,14 @@ The app targets **Expo SDK 58**, so install the current **Expo Go** from the App
 
 ---
 
+## Development
+
+- `npm run check` lints the app and backend and runs the backend tests (they use an in-memory MongoDB, so no database is needed).
+- To run the API locally: copy `backend/.env.example` to `backend/.env`, fill it in, then `cd backend && npm install && npm run dev`.
+- `cd backend && npm run seed` replaces the map locations with the seed list.
+
+---
+
 ## Troubleshooting Tips
 
 - **Backend not working?** Make sure you clicked **Deploy latest commit** on Render.
