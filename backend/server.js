@@ -566,6 +566,33 @@ app.get('/comments/:postId', async (req, res) => {
   }
 });
 
+// Walking directions, proxied so the Google Maps key stays on the server
+const COORD_PATTERN = /^-?\d+(\.\d+)?,-?\d+(\.\d+)?$/;
+
+app.get('/directions', async (req, res) => {
+  const { origin, destination } = req.query;
+
+  if (!COORD_PATTERN.test(origin || '') || !COORD_PATTERN.test(destination || '')) {
+    return res.status(400).json({ message: "origin and destination must be lat,lng" });
+  }
+
+  try {
+    const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${origin}&destination=${destination}&mode=walking&key=${process.env.GOOGLE_MAPS_API_KEY}`;
+    const response = await fetch(url);
+    const data = await response.json();
+
+    if (data.status !== 'OK' && data.status !== 'ZERO_RESULTS') {
+      console.error('Directions API error:', data.status, data.error_message);
+      return res.status(502).json({ message: "Directions lookup failed" });
+    }
+
+    res.json({ points: data.routes?.[0]?.overview_polyline?.points ?? null });
+  } catch (err) {
+    console.error('Error fetching directions:', err);
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(` Server running on port ${PORT}`);

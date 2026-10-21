@@ -310,16 +310,15 @@ const MapScreen = () => {
   
     const origin = `${location.latitude},${location.longitude}`;
     const dest = `${destination.latitude},${destination.longitude}`;
-    const GOOGLE_MAPS_API_KEY = 'AIzaSyCSV46SoFOq-rrbnV5V8VkPU3mVoZw-xHM';
-  
+
     try {
       const response = await fetch(
-        `https://maps.googleapis.com/maps/api/directions/json?origin=${origin}&destination=${dest}&mode=walking&key=${GOOGLE_MAPS_API_KEY}`
+        `https://geospotbackend.onrender.com/directions?origin=${origin}&destination=${dest}`
       );
       const data = await response.json();
-  
-      if (data.routes.length) {
-        const points = polyline.decode(data.routes[0].overview_polyline.points);
+
+      if (data.points) {
+        const points = polyline.decode(data.points);
         const coords = points.map(([lat, lng]) => ({ latitude: lat, longitude: lng }));
   
         // Animate the route in one by one
