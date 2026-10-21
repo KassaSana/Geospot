@@ -10,9 +10,12 @@ const feedRoutes = require('./routes/feed.routes');
 const userRoutes = require('./routes/user.routes');
 const { getUserProfile } = require('./controllers/user.controller');
 const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
 const locationsRouter = require('./routes/locations');
 
 const app = express();
+
+const isBcryptHash = (value) => typeof value === 'string' && /^\$2[aby]\$\d{2}\$/.test(value);
 
 app.use(cors({
   origin: '*', 
@@ -35,7 +38,11 @@ mongoose.connect(process.env.MONGO_URI)
   app.post('/signup', async (req, res) => {
     try {
       const { username, email, password } = req.body;
-  
+
+      if (!username || !email || !password) {
+        return res.status(400).json({ message: "Username, email and password are required" });
+      }
+
       const existingEmail = await UserModel.findOne({ email });
       if (existingEmail) {
         return res.status(400).json({ message: "Email already registered" });
@@ -46,10 +53,12 @@ mongoose.connect(process.env.MONGO_URI)
         return res.status(400).json({ message: "Username already taken" });
       }
   
+      const hashedPassword = await bcrypt.hash(password, 10);
+
       const newUser = await UserModel.create({ 
         username, 
         email, 
-        password, 
+        password: hashedPassword, 
         uid: uuidv4(),
         profilePicture:"https://res.cloudinary.com/dbmpdoet6/image/upload/v1744226231/jxz9tcyulimodvceq47f.png",
         userLevel: 0,          
@@ -97,32 +106,43 @@ mongoose.connect(process.env.MONGO_URI)
   
   
 
-  app.post('/login', (req, res) => {
+  app.post('/login', async (req, res) => {
     const { email, password } = req.body;
-    UserModel.findOne({ email: email })
-      .then(user => {
-        if (user) {
-          if (user.password === password) {
-            res.json({
-              message: "Success",
-              user: {
-                username: user.username,
-                email: user.email,
-                uid: user.uid
-              }
-            });
-          } else {
-            res.json({ message: "Password incorrect" });
-          }
-        } else {
-          res.json({ message: "No record found" });
+    try {
+      const user = await UserModel.findOne({ email: email });
+      if (!user) {
+        return res.json({ message: "No record found" });
+      }
+
+      let passwordMatches;
+      if (isBcryptHash(user.password)) {
+        passwordMatches = await bcrypt.compare(password || '', user.password);
+      } else {
+        // Account created before hashing: check the plaintext once, then upgrade it
+        passwordMatches = Boolean(password) && user.password === password;
+        if (passwordMatches) {
+          user.password = await bcrypt.hash(password, 10);
+          await user.save();
         }
-      })
-      .catch(err => {
-        res.status(500).json({ message: "Server error", error: err });
+      }
+
+      if (!passwordMatches) {
+        return res.json({ message: "Password incorrect" });
+      }
+
+      res.json({
+        message: "Success",
+        user: {
+          username: user.username,
+          email: user.email,
+          uid: user.uid
+        }
       });
+    } catch (err) {
+      res.status(500).json({ message: "Server error", error: err });
+    }
   });
-  
+
 app.post('/UserProfilePage', getUserProfile);
 
 app.post('/updatePetName', async (req, res) => {
