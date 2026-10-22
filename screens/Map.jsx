@@ -1,11 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Modal, Alert, Linking, Platform } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Modal, Alert } from 'react-native';
 import MapView, { Marker, Polyline } from 'react-native-maps';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation } from '@react-navigation/native';
-import { api, ApiError, handleAuthError, uploadImage } from '../api';
+import { api, handleAuthError, uploadImage } from '../api';
+import { fetchTodaysSpot, formatCountdown, openWalkingDirections, REFETCH_INTERVAL_MS } from '../todaysSpot';
 
 function getDistanceInMiles(lat1, lon1, lat2, lon2) {
   const toRad = (value) => (value * Math.PI) / 180;
@@ -22,46 +22,6 @@ function getDistanceInMiles(lat1, lon1, lat2, lon2) {
   return distanceMiles.toFixed(2);
 }
 
-
-const TODAY_CACHE_KEY = 'todaysSpot';
-const DAY_MS = 24 * 60 * 60 * 1000;
-const REFETCH_INTERVAL_MS = 15 * 1000;
-
-// Walking directions in the phone's own maps app, so the app needs no maps API key
-function openWalkingDirections({ latitude, longitude }) {
-  const url = Platform.OS === 'ios'
-    ? `http://maps.apple.com/?daddr=${latitude},${longitude}&dirflg=w`
-    : `https://www.google.com/maps/dir/?api=1&destination=${latitude},${longitude}&travelmode=walking`;
-  Linking.openURL(url).catch(() => Alert.alert('Could not open maps'));
-}
-
-// Today's spot from the server, falling back to the cached copy when offline.
-// A 401 is rethrown so the screen can send the user back to Login.
-async function fetchTodaysSpot() {
-  try {
-    const today = await api('/api/locations/today');
-    await AsyncStorage.setItem(TODAY_CACHE_KEY, JSON.stringify({ ...today, cachedAt: new Date().toISOString() }));
-    return { today, offline: false };
-  } catch (error) {
-    if (error instanceof ApiError) {
-      if (error.status === 401) throw error;
-      return { today: null, offline: false, message: error.message };
-    }
-
-    const cached = JSON.parse((await AsyncStorage.getItem(TODAY_CACHE_KEY)) || 'null');
-    // The cached spot is still today's until the next day's reveal
-    const stillToday = cached && Date.now() < Date.parse(cached.revealAt) + DAY_MS;
-    return { today: stillToday ? cached : null, offline: true, cachedAt: cached?.cachedAt };
-  }
-}
-
-const formatCountdown = (ms) => {
-  const pad = (n) => String(n).padStart(2, '0');
-  const hrs = Math.floor(ms / (1000 * 60 * 60));
-  const mins = Math.floor((ms % (1000 * 60 * 60)) / (1000 * 60));
-  const secs = Math.floor((ms % (1000 * 60)) / 1000);
-  return `${hrs}:${pad(mins)}:${pad(secs)}`;
-};
 
 const MapScreen = () => {
   const navigation = useNavigation();
