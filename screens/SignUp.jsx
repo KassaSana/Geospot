@@ -3,6 +3,8 @@ import { View, Text, TextInput, TouchableOpacity, StyleSheet } from "react-nativ
 import { FontAwesome } from '@expo/vector-icons';
 import { useNavigation } from "@react-navigation/native";
 import { api, saveSession } from '../api';
+import PasswordInput from '../components/PasswordInput';
+import { isValidEmail, newPasswordProblem, MAX_USERNAME_LENGTH } from '../validation';
 
 
 const SignUp = () => {
@@ -15,28 +17,29 @@ const SignUp = () => {
   const handleSubmit = async () => {
     setError("");
   
-    // Basic email and password validation
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  
-    if (!username.trim()) {
+    const name = username.trim();
+    if (!name) {
       setError("Username is required.");
       return;
     }
-  
-    if (!emailRegex.test(email)) {
+    if (name.length > MAX_USERNAME_LENGTH) {
+      setError(`Username must be ${MAX_USERNAME_LENGTH} characters or fewer.`);
+      return;
+    }
+    if (!isValidEmail(email)) {
       setError("Please enter a valid email address.");
       return;
     }
-  
-    if (password.length < 6) {
-      setError("Password must be at least 6 characters long.");
+    const passwordError = newPasswordProblem(password);
+    if (passwordError) {
+      setError(passwordError);
       return;
     }
-  
+
     try {
-      const session = await api('/signup', { method: 'POST', body: { username, email, password } });
+      const session = await api('/signup', { method: 'POST', body: { username: name, email: email.trim(), password } });
       await saveSession(session);
-      navigation.navigate('CreateProfile', { email: email });
+      navigation.navigate('CreateProfile', { email: email.trim() });
     } catch (err) {
       setError(err.message || "An error occurred. Please try again.");
     }
@@ -56,19 +59,28 @@ const SignUp = () => {
           placeholderTextColor="black"
           style={styles.input}
           onChangeText={setUsername}
+          autoCapitalize="none"
+          autoCorrect={false}
+          maxLength={MAX_USERNAME_LENGTH}
         />
         <TextInput
           placeholder="Email"
           placeholderTextColor="black"
           style={styles.input}
           onChangeText={setEmail}
+          keyboardType="email-address"
+          autoCapitalize="none"
+          autoCorrect={false}
+          autoComplete="email"
         />
-        <TextInput
+        <PasswordInput
           placeholder="Password"
           placeholderTextColor="black"
-          secureTextEntry
           style={styles.input}
+          value={password}
           onChangeText={setPassword}
+          autoComplete="new-password"
+          onSubmitEditing={handleSubmit}
         />
 
         {error ? (

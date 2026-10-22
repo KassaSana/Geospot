@@ -3,6 +3,8 @@ import { View, Text, TextInput, TouchableOpacity, StyleSheet } from "react-nativ
 import { FontAwesome } from '@expo/vector-icons';
 import { useNavigation } from "@react-navigation/native";
 import { api, saveSession } from "../api";
+import PasswordInput from "../components/PasswordInput";
+import { isValidEmail } from "../validation";
 
 
 
@@ -15,13 +17,17 @@ const Login = () => {
   const handleSubmit = async () => {
     setError("");
     
-    if (!email || !password) {
+    if (!email.trim() || !password) {
       setError("Please enter both email and password.");
+      return;
+    }
+    if (!isValidEmail(email)) {
+      setError("Please enter a valid email address.");
       return;
     }
 
     try {
-      const session = await api('/login', { method: 'POST', body: { email, password } });
+      const session = await api('/login', { method: 'POST', body: { email: email.trim(), password } });
       await saveSession(session);
       navigation.replace('HomeTabs', {
         screen: 'UserProfilePage',
@@ -46,14 +52,19 @@ const Login = () => {
           style={styles.input}
           value={email}
           onChangeText={setEmail}
+          keyboardType="email-address"
+          autoCapitalize="none"
+          autoCorrect={false}
+          autoComplete="email"
         />
-        <TextInput
+        <PasswordInput
           placeholder="Password"
           placeholderTextColor="black"
-          secureTextEntry
           style={styles.input}
           value={password}
           onChangeText={setPassword}
+          autoComplete="current-password"
+          onSubmitEditing={handleSubmit}
         />
         {error ? (
           <Text style={styles.errorText}>{error}</Text>

@@ -3,6 +3,8 @@ import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert } from 'reac
 import { FontAwesome } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { api } from '../api';
+import PasswordInput from '../components/PasswordInput';
+import { isValidEmail, newPasswordProblem } from '../validation';
 
 const ForgotPassword = () => {
   const [email, setEmail] = useState('');
@@ -16,6 +18,10 @@ const ForgotPassword = () => {
     setError('');
     if (!email.trim()) {
       setError('Please enter your email.');
+      return;
+    }
+    if (!isValidEmail(email)) {
+      setError('Please enter a valid email address.');
       return;
     }
     try {
@@ -32,8 +38,9 @@ const ForgotPassword = () => {
       setError('Enter the 6-digit code from the email.');
       return;
     }
-    if (newPassword.length < 6) {
-      setError('Password must be at least 6 characters long.');
+    const passwordError = newPasswordProblem(newPassword);
+    if (passwordError) {
+      setError(passwordError);
       return;
     }
     try {
@@ -85,12 +92,12 @@ const ForgotPassword = () => {
               keyboardType="number-pad"
               maxLength={6}
             />
-            <TextInput
+            <PasswordInput
               style={styles.input}
               placeholder="New password"
               value={newPassword}
               onChangeText={setNewPassword}
-              secureTextEntry
+              autoComplete="new-password"
             />
             <TouchableOpacity onPress={resetPassword} style={styles.button}>
               <Text style={styles.buttonText}>Set New Password</Text>
