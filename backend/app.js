@@ -1,21 +1,38 @@
 const express = require('express');
 const cors = require('cors');
+const { randomUUID, randomInt } = require('crypto');
+const bcrypt = require('bcryptjs');
 const UserModel = require('./models/user.model');
 const PostModel = require('./models/post.model');
-const { randomUUID } = require('crypto');
 const cloudinary = require('./cloudinary');
+const mailer = require('./lib/mailer');
 const { getUserProfile } = require('./controllers/user.controller');
-const bcrypt = require('bcryptjs');
 const locationsRouter = require('./routes/locations');
+const { signToken, requireAuth } = require('./lib/auth');
+const { dayKey, daysBetween } = require('./lib/spotClock');
 
 const app = express();
 
 const isBcryptHash = (value) => typeof value === 'string' && /^\$2[aby]\$\d{2}\$/.test(value);
+const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const RESET_CODE_LIFETIME_MS = 15 * 60 * 1000;
+const MAX_RESET_ATTEMPTS = 5;
+
+const serverError = (res, label, err) => {
+  console.error(`Error in ${label}:`, err);
+  res.status(500).json({ message: "Server error" });
+};
+
+const sessionFor = (user) => ({
+  token: signToken(user),
+  user: { uid: user.uid, email: user.email, username: user.username },
+});
 
 app.use(cors({
-  origin: '*', 
+  origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization'], 
+  allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
 app.use(express.json({ limit: '10mb' }));
@@ -24,123 +41,178 @@ app.use((req, res, next) => {
   req.body ??= {};
   next();
 });
+
+// ---- Public routes ----
+
+app.post('/signup', async (req, res) => {
+  try {
+    const { username, email, password } = req.body;
+
+    if (!username || !email || !password) {
+      return res.status(400).json({ message: "Username, email and password are required" });
+    }
+
+    if (await UserModel.findOne({ email })) {
+      return res.status(400).json({ message: "Email already registered" });
+    }
+
+    if (await UserModel.findOne({ username })) {
+      return res.status(400).json({ message: "Username already taken" });
+    }
+
+    const newUser = await UserModel.create({
+      username,
+      email,
+      password: await bcrypt.hash(password, 10),
+      uid: randomUUID(),
+    });
+
+    res.json(sessionFor(newUser));
+  } catch (err) {
+    serverError(res, '/signup', err);
+  }
+});
+
+app.post('/login', async (req, res) => {
+  const { email, password } = req.body;
+  try {
+    const user = await UserModel.findOne({ email: email });
+    if (!user) {
+      return res.status(401).json({ message: "No account found with that email" });
+    }
+
+    let passwordMatches;
+    if (isBcryptHash(user.password)) {
+      passwordMatches = await bcrypt.compare(password || '', user.password);
+    } else {
+      // Account created before hashing: check the plaintext once, then upgrade it
+      passwordMatches = Boolean(password) && user.password === password;
+      if (passwordMatches) {
+        user.password = await bcrypt.hash(password, 10);
+        await user.save();
+      }
+    }
+
+    if (!passwordMatches) {
+      return res.status(401).json({ message: "Password incorrect" });
+    }
+
+    res.json(sessionFor(user));
+  } catch (err) {
+    serverError(res, '/login', err);
+  }
+});
+
+// Always answers the same way so it can't be used to discover which emails have accounts
+app.post('/forgotPassword', async (req, res) => {
+  const { email } = req.body;
+  if (!email) {
+    return res.status(400).json({ message: "Email is required" });
+  }
+
+  try {
+    const user = await UserModel.findOne({ email });
+    if (user) {
+      const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
+      user.resetCodeHash = await bcrypt.hash(code, 10);
+      user.resetCodeExpires = new Date(Date.now() + RESET_CODE_LIFETIME_MS);
+      user.resetAttempts = 0;
+      await user.save();
+      await mailer.sendPasswordResetCode(email, code);
+    }
+    res.json({ message: "If that email has an account, a reset code is on its way" });
+  } catch (err) {
+    serverError(res, '/forgotPassword', err);
+  }
+});
+
+app.post('/resetPassword', async (req, res) => {
+  const { email, code, newPassword } = req.body;
+  if (!email || !code || !newPassword) {
+    return res.status(400).json({ message: "Email, code and new password are required" });
+  }
+
+  try {
+    const user = await UserModel.findOne({ email });
+    const usable = user?.resetCodeHash
+      && user.resetCodeExpires > new Date()
+      && user.resetAttempts < MAX_RESET_ATTEMPTS;
+    if (!usable) {
+      return res.status(400).json({ message: "That code has expired, request a new one" });
+    }
+
+    if (!(await bcrypt.compare(String(code), user.resetCodeHash))) {
+      user.resetAttempts += 1;
+      await user.save();
+      return res.status(400).json({ message: "That code is not correct" });
+    }
+
+    user.password = await bcrypt.hash(newPassword, 10);
+    user.resetCodeHash = undefined;
+    user.resetCodeExpires = undefined;
+    user.resetAttempts = 0;
+    await user.save();
+    res.json({ message: "Password updated" });
+  } catch (err) {
+    serverError(res, '/resetPassword', err);
+  }
+});
+
+// ---- Everything below needs a logged-in user (req.user.uid) ----
+
+app.use(requireAuth);
+
 app.use('/api/locations', locationsRouter);
 
-  app.post('/signup', async (req, res) => {
-    try {
-      const { username, email, password } = req.body;
+const findCurrentUser = (req) => UserModel.findOne({ uid: req.user.uid });
 
-      if (!username || !email || !password) {
-        return res.status(400).json({ message: "Username, email and password are required" });
-      }
+app.post('/profileDetails', async (req, res) => {
+  const { firstName, lastName, birthday } = req.body;
+  const birthdayDate = new Date(birthday);
+  if (!firstName || !lastName || Number.isNaN(birthdayDate.getTime())) {
+    return res.status(400).json({ message: "First name, last name and a valid birthday are required" });
+  }
 
-      const existingEmail = await UserModel.findOne({ email });
-      if (existingEmail) {
-        return res.status(400).json({ message: "Email already registered" });
-      }
-  
-      const existingUsername = await UserModel.findOne({ username });
-      if (existingUsername) {
-        return res.status(400).json({ message: "Username already taken" });
-      }
-  
-      const hashedPassword = await bcrypt.hash(password, 10);
+  try {
+    const user = await UserModel.findOneAndUpdate(
+      { uid: req.user.uid },
+      { firstName, lastName, birthday: birthdayDate },
+      { returnDocument: 'after' }
+    );
+    if (!user) return res.status(404).json({ message: "User not found" });
+    res.json({ message: "Profile details saved", user });
+  } catch (err) {
+    serverError(res, '/profileDetails', err);
+  }
+});
 
-      const newUser = await UserModel.create({ 
-        username, 
-        email, 
-        password: hashedPassword, 
-        uid: randomUUID(),
-        profilePicture:"https://res.cloudinary.com/dbmpdoet6/image/upload/v1744226231/jxz9tcyulimodvceq47f.png",
-        userLevel: 0,          
-        spotsVisited: 0,
-        streak: 0,
-        numPosts: 0,
-        numFollowers: 0,
-        numFollowing: 0,
-        memberSince: new Date(), 
-      });
-  
-      res.json(newUser);
-    } catch (err) {
-      console.error("Error during signup:", err);
-      res.status(500).json({ message: "Server error", error: err });
+app.post('/savePet', async (req, res) => {
+  const { selectedPet } = req.body;
+
+  try {
+    const user = await UserModel.findOneAndUpdate(
+      { uid: req.user.uid },
+      { pet: selectedPet, petLevel: 1, petCurrency: 0 },
+      { returnDocument: 'after' }
+    );
+
+    if (user) {
+      res.json({ message: "Pet saved successfully", user });
+    } else {
+      res.status(404).json({ message: "User not found" });
     }
-  });
-  
-
-  app.post('/savePet', async (req, res) => {
-    const { email, selectedPet } = req.body;
-  
-    try {
-      const user = await UserModel.findOneAndUpdate(
-        { email },
-        { 
-          pet: selectedPet,
-          petLevel: 1,            
-          petName: "",       
-          petCurrency: 0          
-        },
-        { returnDocument: 'after' }
-      );
-  
-      if (user) {
-        res.json({ message: "Pet saved successfully", user });
-      } else {
-        res.status(404).json({ message: "User not found" });
-      }
-    } catch (err) {
-      console.error('Error in /savePet:', err);
-      res.status(500).json({ message: "Server error", error: err });
-    }
-  });
-  
-  
-
-  app.post('/login', async (req, res) => {
-    const { email, password } = req.body;
-    try {
-      const user = await UserModel.findOne({ email: email });
-      if (!user) {
-        return res.json({ message: "No record found" });
-      }
-
-      let passwordMatches;
-      if (isBcryptHash(user.password)) {
-        passwordMatches = await bcrypt.compare(password || '', user.password);
-      } else {
-        // Account created before hashing: check the plaintext once, then upgrade it
-        passwordMatches = Boolean(password) && user.password === password;
-        if (passwordMatches) {
-          user.password = await bcrypt.hash(password, 10);
-          await user.save();
-        }
-      }
-
-      if (!passwordMatches) {
-        return res.json({ message: "Password incorrect" });
-      }
-
-      res.json({
-        message: "Success",
-        user: {
-          username: user.username,
-          email: user.email,
-          uid: user.uid
-        }
-      });
-    } catch (err) {
-      res.status(500).json({ message: "Server error", error: err });
-    }
-  });
+  } catch (err) {
+    serverError(res, '/savePet', err);
+  }
+});
 
 app.post('/UserProfilePage', getUserProfile);
 
 app.post('/updatePetName', async (req, res) => {
-  const { email, petName } = req.body;
+  const { petName } = req.body;
   try {
     const user = await UserModel.findOneAndUpdate(
-      { email },
+      { uid: req.user.uid },
       { petName: petName },
       { returnDocument: 'after' }
     );
@@ -150,224 +222,179 @@ app.post('/updatePetName', async (req, res) => {
       res.status(404).json({ message: "User not found" });
     }
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Server error", error: err });
+    serverError(res, '/updatePetName', err);
   }
 });
 
 app.post('/createPost', async (req, res) => {
-  const { userId, username, imageUrl, description, location } = req.body;
+  const { imageUrl, description, location } = req.body;
 
   try {
-    const user = await UserModel.findOne({ uid: userId });
+    const user = await findCurrentUser(req);
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
 
     const newPost = await PostModel.create({
-      userId,
-      username,
+      userId: user.uid,
+      username: user.username,
       userProfilePicture: user.profilePicture,
       imageUrl,
       description,
       location,
     });
 
-    // Increment values
-    user.spotsVisited += 1;
+    // There is one spot a day, so the first post of a day is a visit and extends the streak
+    const today = dayKey();
+    if (user.lastPostDay !== today) {
+      const postedYesterday = user.lastPostDay && daysBetween(user.lastPostDay, today) === 1;
+      user.streak = postedYesterday ? user.streak + 1 : 1;
+      user.spotsVisited += 1;
+      user.lastPostDay = today;
+    }
     user.numPosts += 1;
-    user.streak += 1; // Increment streak too
-
     await user.save();
 
     res.json(newPost);
   } catch (err) {
-    console.error('Error creating post:', err);
-    res.status(500).json({ message: "Server error", error: err });
+    serverError(res, '/createPost', err);
   }
 });
 
-
-
-
-app.get('/friendsFeed/:userId', async (req, res) => {
+// Posts from people who follow you back
+app.get('/friendsFeed', async (req, res) => {
   try {
-    const user = await UserModel.findOne({ uid: req.params.userId });
+    const user = await findCurrentUser(req);
     if (!user) return res.status(404).json({ message: "User not found" });
 
-    const following = user.following || [];
-    const followers = user.followers || [];
-
-    const mutualUids = following
-      .map(f => typeof f === 'string' ? f : f.uid)
-      .filter(uid => followers.some(f => (typeof f === 'string' ? f : f.uid) === uid));
+    const followerUids = new Set(user.followers.map(f => f.uid));
+    const mutualUids = user.following.map(f => f.uid).filter(uid => followerUids.has(uid));
 
     const posts = await PostModel.find({ userId: { $in: mutualUids } }).sort({ date: -1 });
-
     res.json(posts);
   } catch (err) {
-    console.error('Error fetching friends feed:', err);
-    res.status(500).json({ message: "Server error", error: err });
+    serverError(res, '/friendsFeed', err);
   }
 });
-
 
 app.get('/localFeed/:location', async (req, res) => {
   try {
-    const location = req.params.location;
-
-    const posts = await PostModel.find({ location }).sort({ date: -1 });
-
+    const posts = await PostModel.find({ location: req.params.location }).sort({ date: -1 });
     res.json(posts);
   } catch (err) {
-    console.error('Error fetching local feed:', err);
-    res.status(500).json({ message: "Server error", error: err });
+    serverError(res, '/localFeed', err);
   }
 });
 
-app.get('/user/:email', (req, res) => {
-  const { email } = req.params;
-  UserModel.findOne({ email: email })
-    .then(user => {
-      if (user) {
-        res.json(user); 
-      } else {
-        res.status(404).json({ message: "User not found" });
-      }
-    })
-    .catch(err => res.status(500).json({ message: "Server error", error: err }));
+app.get('/user/:email', async (req, res) => {
+  try {
+    const user = await UserModel.findOne({ email: req.params.email });
+    if (user) {
+      res.json(user);
+    } else {
+      res.status(404).json({ message: "User not found" });
+    }
+  } catch (err) {
+    serverError(res, '/user', err);
+  }
 });
 
+const refreshFollowCounts = async (uid) => {
+  const user = await UserModel.findOne({ uid });
+  user.numFollowing = user.following.length;
+  user.numFollowers = user.followers.length;
+  await user.save();
+};
+
 app.post('/follow', async (req, res) => {
-  const { currentUserId, targetUserId } = req.body;
+  const { targetUserId } = req.body;
 
   try {
-    const currentUser = await UserModel.findOne({ uid: currentUserId });
-    const targetUser = await UserModel.findOne({ uid: targetUserId });
+    if (targetUserId === req.user.uid) {
+      return res.status(400).json({ message: "You can't follow yourself" });
+    }
 
+    const currentUser = await findCurrentUser(req);
+    const targetUser = await UserModel.findOne({ uid: targetUserId });
     if (!currentUser || !targetUser) {
       return res.status(404).json({ message: "User(s) not found" });
     }
 
-    // Build follow objects
-    const currentUserInfo = {
-      uid: currentUser.uid,
-      username: currentUser.username,
-      email: currentUser.email,
-    };
+    const summary = (user) => ({ uid: user.uid, username: user.username, email: user.email });
+    await UserModel.updateOne({ uid: currentUser.uid }, { $addToSet: { following: summary(targetUser) } });
+    await UserModel.updateOne({ uid: targetUser.uid }, { $addToSet: { followers: summary(currentUser) } });
 
-    const targetUserInfo = {
-      uid: targetUser.uid,
-      username: targetUser.username,
-      email: targetUser.email,
-    };
-
-    // Add to following / followers
-    await UserModel.updateOne(
-      { uid: currentUserId },
-      { $addToSet: { following: targetUserInfo } }
-    );
-
-    await UserModel.updateOne(
-      { uid: targetUserId },
-      { $addToSet: { followers: currentUserInfo } }
-    );
-
-    // Update counts
-    const updatedCurrent = await UserModel.findOne({ uid: currentUserId });
-    const updatedTarget = await UserModel.findOne({ uid: targetUserId });
-
-    updatedCurrent.numFollowing = updatedCurrent.following.length;
-    updatedTarget.numFollowers = updatedTarget.followers.length;
-
-    await updatedCurrent.save();
-    await updatedTarget.save();
+    await refreshFollowCounts(currentUser.uid);
+    await refreshFollowCounts(targetUser.uid);
 
     res.json({ message: "Followed successfully" });
   } catch (err) {
-    console.error('Error in /follow:', err);
-    res.status(500).json({ message: "Server error", error: err.message });
+    serverError(res, '/follow', err);
   }
 });
 
-
-
-
-
 app.post('/unfollow', async (req, res) => {
-  const { currentUserId, targetUserId } = req.body;
+  const { targetUserId } = req.body;
 
   try {
-    await UserModel.findOneAndUpdate(
-      { uid: currentUserId },
-      { $pull: { following: { uid: targetUserId } } }
-    );
+    const currentUser = await findCurrentUser(req);
+    const targetUser = await UserModel.findOne({ uid: targetUserId });
+    if (!currentUser || !targetUser) {
+      return res.status(404).json({ message: "User(s) not found" });
+    }
 
-    await UserModel.findOneAndUpdate(
-      { uid: targetUserId },
-      { $pull: { followers: { uid: currentUserId } } }
-    );
+    await UserModel.updateOne({ uid: currentUser.uid }, { $pull: { following: { uid: targetUser.uid } } });
+    await UserModel.updateOne({ uid: targetUser.uid }, { $pull: { followers: { uid: currentUser.uid } } });
 
-    const updatedCurrentUser = await UserModel.findOne({ uid: currentUserId });
-    const updatedTargetUser = await UserModel.findOne({ uid: targetUserId });
-
-    await UserModel.findOneAndUpdate({ uid: currentUserId }, {
-      numFollowing: updatedCurrentUser.following.length
-    });
-
-    await UserModel.findOneAndUpdate({ uid: targetUserId }, {
-      numFollowers: updatedTargetUser.followers.length
-    });
+    await refreshFollowCounts(currentUser.uid);
+    await refreshFollowCounts(targetUser.uid);
 
     res.json({ message: "Unfollowed successfully" });
   } catch (err) {
-    console.error('Error unfollowing user:', err);
-    res.status(500).json({ message: "Server error", error: err });
+    serverError(res, '/unfollow', err);
   }
 });
 
-
-
-
 app.post('/updateProfilePicture', async (req, res) => {
-  const { email, image } = req.body;
-
-  console.log('/updateProfilePicture endpoint hit');
-  console.log('Received email:', email);
-  console.log('Received image (first 100 chars):', image ? image.substring(0, 100) : 'No image');
+  const { image } = req.body;
+  if (!image) return res.status(400).json({ message: "No image provided" });
 
   try {
     const uploadResponse = await cloudinary.uploader.upload(image, {
       upload_preset: 'ml_default',
     });
 
-    console.log('Successfully uploaded to Cloudinary:', uploadResponse.secure_url);
-
     const user = await UserModel.findOneAndUpdate(
-      { email },
+      { uid: req.user.uid },
       { profilePicture: uploadResponse.secure_url },
       { returnDocument: 'after' }
     );
 
     if (user) {
-      console.log('Updated user in MongoDB');
       res.json({ message: "Profile picture updated", user });
     } else {
-      console.log('User not found');
       res.status(404).json({ message: "User not found" });
     }
   } catch (err) {
-    console.error('Error in /updateProfilePicture:', err);  
-    res.status(500).json({ message: "Server error", error: err });
+    serverError(res, '/updateProfilePicture', err);
   }
 });
 
 app.post('/updateProfile', async (req, res) => {
-  const { email, username, bio } = req.body;
+  const { username, bio } = req.body;
 
   try {
+    if (!username) {
+      return res.status(400).json({ message: "Username is required" });
+    }
+
+    const taken = await UserModel.findOne({ username, uid: { $ne: req.user.uid } });
+    if (taken) {
+      return res.status(400).json({ message: "Username already taken" });
+    }
+
     const user = await UserModel.findOneAndUpdate(
-      { email },
+      { uid: req.user.uid },
       { username, bio },
       { returnDocument: 'after' }
     );
@@ -378,42 +405,38 @@ app.post('/updateProfile', async (req, res) => {
       res.status(404).json({ message: "User not found" });
     }
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Server error", error: err });
+    serverError(res, '/updateProfile', err);
   }
 });
 
 app.post('/search', async (req, res) => {
-  const { username, currentUserId } = req.body;
+  const { username } = req.body;
 
   try {
-    if (!username || !currentUserId) {
-      return res.status(400).json({ error: "Missing username or currentUserId" });
+    if (!username) {
+      return res.status(400).json({ message: "Missing username" });
+    }
+
+    const currentUser = await findCurrentUser(req);
+    if (!currentUser) {
+      return res.status(404).json({ message: 'Current user not found' });
     }
 
     const results = await UserModel.find({
-      username: { $regex: username, $options: 'i' },
-      uid: { $ne: currentUserId }, 
-    });
+      username: { $regex: escapeRegex(username), $options: 'i' },
+      uid: { $ne: currentUser.uid },
+    }).limit(25);
 
-    const currentUser = await UserModel.findOne({ uid: currentUserId });
-    if (!currentUser) {
-      return res.status(404).json({ error: 'Current user not found' });
-    }
+    const followingSet = new Set(currentUser.following.map(f => f.uid));
 
-    const followingSet = new Set((currentUser.following || []).map(f => f.uid || f));
-
-    const annotatedResults = results.map(user => ({
+    res.json(results.map(user => ({
       uid: user.uid,
       username: user.username,
       email: user.email,
       isFollowing: followingSet.has(user.uid),
-    }));
-
-    res.json(annotatedResults);
-  } catch (error) {
-    console.error('Search error:', error);
-    res.status(500).json({ error: 'Search failed' });
+    })));
+  } catch (err) {
+    serverError(res, '/search', err);
   }
 });
 
@@ -428,39 +451,28 @@ app.post('/uploadPhoto', async (req, res) => {
     });
 
     res.json({ imageUrl: uploadResponse.secure_url });
-    console.log("Uploaded image URL:", uploadResponse.secure_url);
   } catch (err) {
-    console.error('Error uploading photo:', err);
-    res.status(500).json({ message: "Server error", error: err });
+    serverError(res, '/uploadPhoto', err);
   }
-});  
-
-
+});
 
 app.get('/followers/:userId', async (req, res) => {
   try {
     const user = await UserModel.findOne({ uid: req.params.userId });
     if (!user) return res.status(404).json({ message: "User not found" });
-
-    res.json(user.followers); 
+    res.json(user.followers);
   } catch (err) {
-    console.error('Error fetching followers:', err);
-    res.status(500).json({ message: "Server error", error: err });
+    serverError(res, '/followers', err);
   }
 });
-
-
-
 
 app.get('/following/:userId', async (req, res) => {
   try {
     const user = await UserModel.findOne({ uid: req.params.userId });
     if (!user) return res.status(404).json({ message: "User not found" });
-
     res.json(user.following);
   } catch (err) {
-    console.error('Error fetching following:', err);
-    res.status(500).json({ message: "Server error", error: err });
+    serverError(res, '/following', err);
   }
 });
 
@@ -469,98 +481,79 @@ app.get('/userPosts/:uid', async (req, res) => {
     const posts = await PostModel.find({ userId: req.params.uid }).sort({ date: -1 });
     res.json(posts);
   } catch (err) {
-    console.error("Error fetching user posts:", err);
-    res.status(500).json({ message: "Failed to load posts", error: err });
+    serverError(res, '/userPosts', err);
   }
 });
 
 // Like/unlike post
 app.post('/likePost', async (req, res) => {
   try {
-    const { postId, userId } = req.body;
+    const { postId } = req.body;
+    const userId = req.user.uid;
 
     const post = await PostModel.findById(postId);
     if (!post) {
       return res.status(404).json({ message: "Post not found" });
     }
 
-    const isLiked = post.likes && post.likes.includes(userId);
-    
+    const isLiked = post.likes.includes(userId);
     if (isLiked) {
-      // Unlike 
       post.likes = post.likes.filter(id => id !== userId);
     } else {
-      // Like 
-      if (!post.likes) {
-        post.likes = [];
-      }
       post.likes.push(userId);
     }
-
     await post.save();
-    
-    res.json({ 
+
+    res.json({
       message: isLiked ? "Post unliked" : "Post liked",
       likes: post.likes.length
     });
-    
   } catch (err) {
-    console.error('Error toggling like:', err);
-    res.status(500).json({ message: "Server error", error: err });
+    serverError(res, '/likePost', err);
   }
 });
 
-// Add comment  
 app.post('/addComment', async (req, res) => {
   try {
-    const { postId, userId, username, userProfilePicture, text } = req.body;
+    const { postId, text } = req.body;
+    if (!text?.trim()) {
+      return res.status(400).json({ message: "Comment text is required" });
+    }
 
-    const post = await PostModel.findById(postId);
-    if (!post) {
+    const [post, user] = await Promise.all([PostModel.findById(postId), findCurrentUser(req)]);
+    if (!post || !user) {
       return res.status(404).json({ message: "Post not found" });
     }
 
     const newComment = {
-      userId,
-      username,
-      userProfilePicture,
-      text,
+      userId: user.uid,
+      username: user.username,
+      userProfilePicture: user.profilePicture,
+      text: text.trim(),
       date: new Date()
     };
 
-    if (!post.comments) {
-      post.comments = [];
-    }
-    
     post.comments.push(newComment);
     await post.save();
-    
-    res.json({ 
+
+    res.json({
       message: "Comment added successfully",
       comment: newComment
     });
-    
   } catch (err) {
-    console.error('Error adding comment:', err);
-    res.status(500).json({ message: "Server error", error: err });
+    serverError(res, '/addComment', err);
   }
 });
 
-// Get all comments for a post
 app.get('/comments/:postId', async (req, res) => {
   try {
-    const { postId } = req.params;
-
-    const post = await PostModel.findById(postId);
+    const post = await PostModel.findById(req.params.postId);
     if (!post) {
       return res.status(404).json({ message: "Post not found" });
     }
-
-    res.json(post.comments || []);
-    
+    res.json(post.comments);
   } catch (err) {
-    console.error('Error fetching comments:', err);
-    res.status(500).json({ message: "Server error", error: err });
+    serverError(res, '/comments', err);
   }
 });
 
@@ -586,8 +579,7 @@ app.get('/directions', async (req, res) => {
 
     res.json({ points: data.routes?.[0]?.overview_polyline?.points ?? null });
   } catch (err) {
-    console.error('Error fetching directions:', err);
-    res.status(500).json({ message: "Server error", error: err.message });
+    serverError(res, '/directions', err);
   }
 });
 

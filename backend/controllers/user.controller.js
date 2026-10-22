@@ -1,4 +1,5 @@
 const UserModel = require('../models/user.model');
+const { currentStreak } = require('../lib/spotClock');
 
 const getUserProfile = async (req, res) => {
   try {
@@ -36,6 +37,7 @@ const getUserProfile = async (req, res) => {
       ...user.toObject(),
       followers: populatedFollowers,
       following: populatedFollowing,
+      streak: currentStreak(user.streak, user.lastPostDay),
     };
 
     res.json(enrichedUser);
