@@ -7,7 +7,6 @@ const locations = [
     name: 'Plaza of the Americas',
     description: 'A central UF landmark with shady oak trees and hammocks.',
     coordinates: { lat: 29.6505, lng: -82.3429 },
-    isActive: true,
   },
   {
     name: 'Century Tower',
@@ -40,4 +39,8 @@ async function seed() {
   }
 }
 
-seed();
+if (require.main === module) {
+  seed();
+}
+
+module.exports = { locations };

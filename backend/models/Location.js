@@ -8,7 +8,7 @@ const locationSchema = new mongoose.Schema({
     lng: { type: Number, required: true },
   },
   imagePrompt: { type: String },                         
-  isActive: { type: Boolean, default: false },          
+  isActive: { type: Boolean, default: true }, // in the daily rotation          
   createdAt: { type: Date, default: Date.now },
 });
 
