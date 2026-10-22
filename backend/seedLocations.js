@@ -1,5 +1,5 @@
 const mongoose = require('mongoose');
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
 const LocationModel = require('./models/Location');
 
 const locations = [
@@ -7,7 +7,6 @@ const locations = [
     name: 'Plaza of the Americas',
     description: 'A central UF landmark with shady oak trees and hammocks.',
     coordinates: { lat: 29.6505, lng: -82.3429 },
-    isActive: true,
   },
   {
     name: 'Century Tower',
@@ -28,10 +27,7 @@ const locations = [
 
 async function seed() {
   try {
-    await mongoose.connect(process.env.MONGO_URI, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-    });
+    await mongoose.connect(process.env.MONGO_URI, { dbName: 'geospot' });
 
     await LocationModel.deleteMany(); 
     await LocationModel.insertMany(locations);
@@ -43,4 +39,16 @@ async function seed() {
   }
 }
 
-seed();
+// Adds the seed locations to an empty database, so a fresh deploy has a daily spot
+async function seedIfEmpty() {
+  if (await LocationModel.estimatedDocumentCount() === 0) {
+    await LocationModel.insertMany(locations);
+    console.log(`Added ${locations.length} seed locations`);
+  }
+}
+
+if (require.main === module) {
+  seed();
+}
+
+module.exports = { locations, seedIfEmpty };

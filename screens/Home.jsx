@@ -1,10 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, Image, TouchableOpacity, Alert, FlatList, StyleSheet, TextInput, Modal } from 'react-native';
-import * as SecureStore from 'expo-secure-store';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from '@react-navigation/native';
-import { useCallback } from 'react';
 import { Ionicons } from '@expo/vector-icons';
+import { api, getSessionUser, handleAuthError, mediaUrl } from '../api';
+import { avatarImage } from '../images';
 
 const Home = ({ navigation }) => {
   const [activeTab, setActiveTab] = useState('friends');
@@ -14,110 +13,62 @@ const Home = ({ navigation }) => {
   const [commentModalVisible, setCommentModalVisible] = useState(false);
   const [selectedPostId, setSelectedPostId] = useState(null);
   const [showComments, setShowComments] = useState({});
+  const [feedState, setFeedState] = useState('loading'); // loading | ready | error
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
-    const debugSecureStore = async () => {
-      const user = await SecureStore.getItemAsync('user');
-      const token = await SecureStore.getItemAsync('token');
-
-      console.log("🔍 SecureStore user:", user);
-      console.log("🔍 SecureStore token:", token);
-    };
-    debugSecureStore();
+    getSessionUser()
+      .then(setUser)
+      .catch((error) => console.error('Error loading user:', error));
   }, []);
 
-  useEffect(() => {
-    const loadUser = async () => {
-      try {
-        const rawUser = await SecureStore.getItemAsync('user');
-        if (rawUser) {
-          setUser(JSON.parse(rawUser));
-        }
-      } catch (error) {
-        console.error('Error loading user:', error);
-      }
-    };
-    loadUser();
-  }, []);
-
-  const fetchPosts = async () => {
+  const fetchPosts = useCallback(async () => {
     try {
-      const token = await SecureStore.getItemAsync('token');
-      const rawUser = await SecureStore.getItemAsync('user');
-
-      if (!rawUser) {
-        console.warn('User info not found in SecureStore. Redirecting to login...');
-        await SecureStore.deleteItemAsync('token');
-        navigation.replace('Login');
-        return;
-      }
-
-      const userInfo = JSON.parse(rawUser);
-      let endpoint = '';
-
-      if (activeTab === 'friends') {
-        endpoint = `https://geospotbackend.onrender.com/friendsFeed/${userInfo.uid}`;
-      } else {
-        endpoint = `https://geospotbackend.onrender.com/localFeed/${userInfo.location || 'Gainesville'}`;
-      }
-
-      const response = await fetch(endpoint, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
-      const data = await response.json();
-      setPosts(data);
+      const path = activeTab === 'friends' ? '/friendsFeed' : '/localFeed/Gainesville';
+      setPosts(await api(path));
+      setFeedState('ready');
     } catch (error) {
-      console.error('Error fetching posts:', error);
+      if (!(await handleAuthError(error, navigation))) {
+        console.error('Error fetching posts:', error);
+        setFeedState('error');
+      }
     }
-  };
+  }, [activeTab, navigation]);
 
   useFocusEffect(
     useCallback(() => {
       fetchPosts();
-    }, [activeTab])
+    }, [fetchPosts])
   );
 
+  const handleRefresh = () => {
+    setRefreshing(true);
+    fetchPosts().finally(() => setRefreshing(false));
+  };
+
+  let emptyMessage = null;
+  if (feedState === 'error') {
+    emptyMessage = "Couldn't load posts. Pull down to try again.";
+  } else if (feedState === 'ready') {
+    emptyMessage = activeTab === 'friends'
+      ? 'No posts from friends yet. Posts from people you follow who follow you back show up here.'
+      : "No posts here yet. Find today's spot on the Map and share a photo!";
+  }
+
   const handleLike = async (postId) => {
-    if (!user) {
-      console.log("Cannot like: No user logged in");
-      return;
-    }
-    
-    console.log(`Attempting to like post: ${postId}`);
-    
+    if (!user) return;
+
     try {
-      const response = await fetch('https://geospotbackend.onrender.com/likePost', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ 
-          postId: postId,
-          userId: user.uid 
-        }),
-      });
-      
-      if (!response.ok) {
-        console.error(`Error liking post: ${response.status}`);
-        Alert.alert('Error', 'Unable to like post');
-        return;
-      }
-      
-      const result = await response.json();
-      console.log('Like result:', result);
-      
-      // Update posts state to reflect the like
-      setPosts(currentPosts => 
+      await api('/likePost', { method: 'POST', body: { postId } });
+
+      setPosts(currentPosts =>
         currentPosts.map(post => {
           if (post._id === postId) {
             const isLiked = post.likes?.includes(user.uid);
             return {
               ...post,
-              likes: isLiked 
-                ? post.likes.filter(id => id !== user.uid) 
+              likes: isLiked
+                ? post.likes.filter(id => id !== user.uid)
                 : [...(post.likes || []), user.uid]
             };
           }
@@ -125,8 +76,9 @@ const Home = ({ navigation }) => {
         })
       );
     } catch (error) {
-      console.error('Error liking post:', error);
-      Alert.alert('Error', 'Unable to like post');
+      if (!(await handleAuthError(error, navigation))) {
+        Alert.alert('Error', error.message || 'Unable to like post');
+      }
     }
   };
 
@@ -137,57 +89,28 @@ const Home = ({ navigation }) => {
   };
 
   const handleAddComment = async () => {
-    if (!commentText.trim()) {
-      return;
-    }
-    
-    if (!user) {
-      console.log("Cannot add comment: No user logged in");
-      return;
-    }
-    
+    if (!commentText.trim()) return;
+
     try {
-      const response = await fetch('https://geospotbackend.onrender.com/addComment', {
+      const result = await api('/addComment', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          postId: selectedPostId,
-          userId: user.uid,
-          username: user.username,
-          userProfilePicture: user.profilePicture || 'https://via.placeholder.com/40',
-          text: commentText,
-        }),
+        body: { postId: selectedPostId, text: commentText },
       });
-      
-      if (!response.ok) {
-        console.error(`Error adding comment: ${response.status}`);
-        Alert.alert('Error', 'Unable to add comment');
-        return;
-      }
-      
-      const result = await response.json();
-      console.log('Comment result:', result);
-      
-      // Update posts state to include the new comment
-      setPosts(currentPosts => 
-        currentPosts.map(post => {
-          if (post._id === selectedPostId) {
-            return {
-              ...post,
-              comments: [...(post.comments || []), result.comment]
-            };
-          }
-          return post;
-        })
+
+      setPosts(currentPosts =>
+        currentPosts.map(post =>
+          post._id === selectedPostId
+            ? { ...post, comments: [...(post.comments || []), result.comment] }
+            : post
+        )
       );
-      
+
       setCommentText('');
       setCommentModalVisible(false);
     } catch (error) {
-      console.error('Error adding comment:', error);
-      Alert.alert('Error', 'Unable to add comment');
+      if (!(await handleAuthError(error, navigation))) {
+        Alert.alert('Error', error.message || 'Unable to add comment');
+      }
     }
   };
 
@@ -196,50 +119,6 @@ const Home = ({ navigation }) => {
       ...prev,
       [postId]: !prev[postId]
     }));
-  };
-
-  const createTestPost = async () => {
-    try {
-      const rawUser = await SecureStore.getItemAsync('user');
-      if (!rawUser) {
-        console.error('User not found in SecureStore');
-        return;
-      }
-  
-      const user = JSON.parse(rawUser);
-      if (!user.email) {
-        console.error('User email is missing');
-        return;
-      }
-  
-      const response = await fetch(`https://geospotbackend.onrender.com/user/${user.email}`);
-      const dbUser = await response.json();
-      if (!dbUser || !dbUser.uid) {
-        console.error('DB user not found');
-        return;
-      }
-  
-      await fetch('https://geospotbackend.onrender.com/createPost', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          userId: dbUser.uid,
-          username: dbUser.username,
-          userProfilePicture: dbUser.profilePicture,
-          imageUrl: 'https://picsum.photos/600/400',
-          description: 'Exploring Gainesville!',
-          location: 'Gainesville',
-          date: new Date(),
-        }),
-      });
-  
-      Alert.alert('Test post created!');
-      fetchPosts(); // Refetch posts to refresh the feed
-    } catch (error) {
-      console.error('Error creating test post:', error);
-    }
   };
 
   return (
@@ -259,7 +138,7 @@ const Home = ({ navigation }) => {
           <View style={styles.postCard}>
             <View style={styles.postHeader}>
               <Image
-                source={{ uri: item.userProfilePicture || 'https://via.placeholder.com/40' }}
+                source={avatarImage(item.userProfilePicture)}
                 style={styles.profileImage}
               />
               <View>
@@ -268,7 +147,7 @@ const Home = ({ navigation }) => {
               </View>
             </View>
 
-            <Image source={{ uri: item.imageUrl }} style={styles.postImage} />
+            <Image source={{ uri: mediaUrl(item.imageUrl) }} style={styles.postImage} />
             <View style={styles.postInfo}>
               <Text style={styles.description}>{item.description}</Text>
               
@@ -304,7 +183,7 @@ const Home = ({ navigation }) => {
                     item.comments.map((comment, index) => (
                       <View key={index} style={styles.commentItem}>
                         <Image 
-                          source={{ uri: comment.userProfilePicture || 'https://via.placeholder.com/30' }} 
+                          source={avatarImage(comment.userProfilePicture)} 
                           style={styles.commentAvatar} 
                         />
                         <View style={styles.commentContent}>
@@ -332,7 +211,10 @@ const Home = ({ navigation }) => {
           </View>
         )}
         keyExtractor={(item) => item._id}
-        contentContainerStyle={{ paddingBottom: 40 }}
+        contentContainerStyle={{ paddingBottom: 40, flexGrow: 1 }}
+        refreshing={refreshing}
+        onRefresh={handleRefresh}
+        ListEmptyComponent={emptyMessage && <Text style={styles.emptyText}>{emptyMessage}</Text>}
       />
       
       <Modal
@@ -374,6 +256,13 @@ const Home = ({ navigation }) => {
 };
 
 const styles = StyleSheet.create({
+  emptyText: {
+    color: '#a0aec0',
+    fontSize: 16,
+    textAlign: 'center',
+    marginTop: 60,
+    paddingHorizontal: 30,
+  },
   container: {
     backgroundColor: '#2d3748',
     flex: 1,

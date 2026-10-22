@@ -1,10 +1,10 @@
 import React, { useState } from "react";
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert } from "react-native";
+import { View, Text, TextInput, TouchableOpacity, StyleSheet } from "react-native";
 import { FontAwesome } from '@expo/vector-icons';
 import { useNavigation } from "@react-navigation/native";
-import axios from "axios";
-import * as SecureStore from 'expo-secure-store';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { api, saveSession } from "../api";
+import PasswordInput from "../components/PasswordInput";
+import { isValidEmail } from "../validation";
 
 
 
@@ -17,36 +17,24 @@ const Login = () => {
   const handleSubmit = async () => {
     setError("");
     
-    if (!email || !password) {
+    if (!email.trim() || !password) {
       setError("Please enter both email and password.");
+      return;
+    }
+    if (!isValidEmail(email)) {
+      setError("Please enter a valid email address.");
       return;
     }
 
     try {
-      const result = await axios.post('https://geospotbackend.onrender.com/login', { email, password });
-  
-      if (result.data.message === "Success") {
-        const user = {
-          uid: result.data.user.uid,
-          email: result.data.user.email,
-          username: result.data.user.username,
-        };
-        
-        await SecureStore.deleteItemAsync('user');
-        console.log(" Cleared previous user from SecureStore");
-        await SecureStore.setItemAsync('user', JSON.stringify(user));
-        console.log(" User saved to SecureStore");
-  
-        navigation.replace('HomeTabs', {
-          screen: 'UserProfilePage',
-          params: { email: user.email }
-        });
-      } else {
-        setError(result.data.message || "Invalid credentials. Please try again.");
-      }
+      const session = await api('/login', { method: 'POST', body: { email: email.trim(), password } });
+      await saveSession(session);
+      navigation.replace('HomeTabs', {
+        screen: 'UserProfilePage',
+        params: { email: session.user.email }
+      });
     } catch (err) {
-      console.error(err);
-      setError("An error occurred. Please try again later.");
+      setError(err.message || "An error occurred. Please try again later.");
     }
   };
   
@@ -64,14 +52,19 @@ const Login = () => {
           style={styles.input}
           value={email}
           onChangeText={setEmail}
+          keyboardType="email-address"
+          autoCapitalize="none"
+          autoCorrect={false}
+          autoComplete="email"
         />
-        <TextInput
+        <PasswordInput
           placeholder="Password"
           placeholderTextColor="black"
-          secureTextEntry
           style={styles.input}
           value={password}
           onChangeText={setPassword}
+          autoComplete="current-password"
+          onSubmitEditing={handleSubmit}
         />
         {error ? (
           <Text style={styles.errorText}>{error}</Text>
@@ -83,7 +76,7 @@ const Login = () => {
 
         <TouchableOpacity onPress={() => navigation.navigate('SignUp')}>
             <Text style={styles.link}>
-                Don't have an account? Sign up
+                Don&apos;t have an account? Sign up
             </Text>
         </TouchableOpacity>
 

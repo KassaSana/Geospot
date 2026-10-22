@@ -1,0 +1,26 @@
+# Render blueprint for the API. In Render: New > Blueprint > pick this repo.
+# Render asks for MONGO_URI (and the optional email settings), generates JWT_SECRET,
+# and redeploys on every push to main. The seed locations load on first start.
+services:
+  - type: web
+    name: geospot-kassasana # the app's default API_URL in api.js is https://<name>.onrender.com
+    runtime: node
+    plan: free
+    rootDir: backend
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "24"
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true
+      - key: MONGO_URI
+        sync: false
+      # Optional: password reset emails (see backend/.env.example)
+      - key: SMTP_URL
+        sync: false
+      - key: MAIL_FROM
+        sync: false

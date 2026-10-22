@@ -2,44 +2,112 @@ import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert } from 'react-native';
 import { FontAwesome } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
+import { api } from '../api';
+import PasswordInput from '../components/PasswordInput';
+import { isValidEmail, newPasswordProblem } from '../validation';
 
 const ForgotPassword = () => {
   const [email, setEmail] = useState('');
+  const [code, setCode] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [codeSent, setCodeSent] = useState(false);
+  const [error, setError] = useState('');
   const navigation = useNavigation();
 
-  const handleSubmit = () => {
-    if (email === '') {
-      Alert.alert('Error', 'Please enter your email');
+  const requestCode = async () => {
+    setError('');
+    if (!email.trim()) {
+      setError('Please enter your email.');
       return;
     }
+    if (!isValidEmail(email)) {
+      setError('Please enter a valid email address.');
+      return;
+    }
+    try {
+      await api('/forgotPassword', { method: 'POST', body: { email: email.trim() } });
+      setCodeSent(true);
+    } catch (err) {
+      setError(err.message || 'Could not send a reset code. Please try again.');
+    }
+  };
 
-    console.log('Password reset requested for:', email);
-    navigation.navigate('Login');
+  const resetPassword = async () => {
+    setError('');
+    if (!/^\d{6}$/.test(code.trim())) {
+      setError('Enter the 6-digit code from the email.');
+      return;
+    }
+    const passwordError = newPasswordProblem(newPassword);
+    if (passwordError) {
+      setError(passwordError);
+      return;
+    }
+    try {
+      await api('/resetPassword', {
+        method: 'POST',
+        body: { email: email.trim(), code: code.trim(), newPassword },
+      });
+      Alert.alert('Password updated', 'You can log in with your new password.');
+      navigation.navigate('Login');
+    } catch (err) {
+      setError(err.message || 'Could not reset your password. Please try again.');
+    }
   };
 
   return (
     <View style={styles.container}>
-      {/* Title */}
       <Text style={styles.title}>Reset Password</Text>
 
-      {/* Icon */}
       <FontAwesome name="lock" size={50} color="#68d391" style={styles.icon} />
 
-      {/* Forgot Password Form */}
       <View style={styles.form}>
-        <Text style={styles.instruction}>
-          Enter your email to receive reset instructions.
-        </Text>
-        <TextInput
-          style={styles.input}
-          placeholder="Email"
-          value={email}
-          onChangeText={setEmail}
-          keyboardType="email-address"
-        />
-        <TouchableOpacity onPress={handleSubmit} style={styles.button}>
-          <Text style={styles.buttonText}>Send Reset Link</Text>
-        </TouchableOpacity>
+        {!codeSent ? (
+          <>
+            <Text style={styles.instruction}>
+              Enter your email and we&apos;ll send you a reset code.
+            </Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Email"
+              value={email}
+              onChangeText={setEmail}
+              keyboardType="email-address"
+              autoCapitalize="none"
+            />
+            <TouchableOpacity onPress={requestCode} style={styles.button}>
+              <Text style={styles.buttonText}>Send Reset Code</Text>
+            </TouchableOpacity>
+          </>
+        ) : (
+          <>
+            <Text style={styles.instruction}>
+              If {email.trim()} has an account, a 6-digit code is on its way. It expires in 15 minutes.
+            </Text>
+            <TextInput
+              style={styles.input}
+              placeholder="6-digit code"
+              value={code}
+              onChangeText={setCode}
+              keyboardType="number-pad"
+              maxLength={6}
+            />
+            <PasswordInput
+              style={styles.input}
+              placeholder="New password"
+              value={newPassword}
+              onChangeText={setNewPassword}
+              autoComplete="new-password"
+            />
+            <TouchableOpacity onPress={resetPassword} style={styles.button}>
+              <Text style={styles.buttonText}>Set New Password</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={requestCode}>
+              <Text style={styles.link}>Send a new code</Text>
+            </TouchableOpacity>
+          </>
+        )}
+        {error ? <Text style={styles.error}>{error}</Text> : null}
         <TouchableOpacity onPress={() => navigation.navigate('Login')}>
           <Text style={styles.link}>Back to Login</Text>
         </TouchableOpacity>
@@ -100,6 +168,11 @@ const styles = StyleSheet.create({
     color: 'black',
     fontWeight: 'bold',
     fontSize: 18,
+  },
+  error: {
+    color: '#feb2b2',
+    marginTop: 10,
+    textAlign: 'center',
   },
   link: {
     color: '#3182ce',
