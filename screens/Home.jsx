@@ -3,6 +3,7 @@ import { View, Text, Image, TouchableOpacity, Alert, FlatList, StyleSheet, TextI
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { api, getSessionUser, handleAuthError } from '../api';
+import { avatarImage } from '../images';
 
 const Home = ({ navigation }) => {
   const [activeTab, setActiveTab] = useState('friends');
@@ -119,7 +120,7 @@ const Home = ({ navigation }) => {
           <View style={styles.postCard}>
             <View style={styles.postHeader}>
               <Image
-                source={{ uri: item.userProfilePicture || 'https://via.placeholder.com/40' }}
+                source={avatarImage(item.userProfilePicture)}
                 style={styles.profileImage}
               />
               <View>
@@ -164,7 +165,7 @@ const Home = ({ navigation }) => {
                     item.comments.map((comment, index) => (
                       <View key={index} style={styles.commentItem}>
                         <Image 
-                          source={{ uri: comment.userProfilePicture || 'https://via.placeholder.com/30' }} 
+                          source={avatarImage(comment.userProfilePicture)} 
                           style={styles.commentAvatar} 
                         />
                         <View style={styles.commentContent}>

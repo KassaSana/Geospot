@@ -4,6 +4,7 @@ import { useRoute, useNavigation, useFocusEffect } from "@react-navigation/nativ
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { api, getSessionUser, updateSessionUser, clearSession, handleAuthError } from '../api';
+import { avatarImage, petImage, PET_BACKGROUND } from '../images';
 
 
 const UserProfilePage = () => {
@@ -242,7 +243,7 @@ const UserProfilePage = () => {
       {/* Profile Section */}
       <View style={styles.profileContainer}>
         <Image 
-          source={{ uri: user.profilePicture || 'https://res.cloudinary.com/dbmpdoet6/image/upload/v1744226231/jxz9tcyulimodvceq47f.png' }} 
+          source={avatarImage(user.profilePicture)} 
           style={styles.profilePicture} 
         />
         
@@ -353,13 +354,13 @@ const UserProfilePage = () => {
           <View style={styles.petImageContainer}>
             {/* Background Image */}
             <Image 
-              source={{ uri: "https://res.cloudinary.com/dbmpdoet6/image/upload/v1744232304/d8qvvsonsrd3em0asyn5.png" }} 
+              source={PET_BACKGROUND} 
               style={styles.backgroundImage} 
             />
             
             {/* Pet Image */}
             <Image 
-              source={{ uri: user.pet || "https://res.cloudinary.com/dbmpdoet6/image/upload/v1744230983/kispd3yrq5srohe7igiq.png" }}
+              source={petImage(user.pet)}
               style={styles.petImage}
             />
           </View>
@@ -532,13 +533,13 @@ const UserProfilePage = () => {
       <View style={styles.petModalImageContainer}>
         {/* Background Image */}
         <Image 
-          source={{ uri: "https://res.cloudinary.com/dbmpdoet6/image/upload/v1744232304/d8qvvsonsrd3em0asyn5.png" }} 
+          source={PET_BACKGROUND} 
           style={styles.petModalBackgroundImage}
         />
         
         {/* Pet Image */}
         <Image
-          source={{ uri: user.pet || "https://res.cloudinary.com/dbmpdoet6/image/upload/v1744230983/kispd3yrq5srohe7igiq.png" }}
+          source={petImage(user.pet)}
           style={styles.petModalPetImage}
         />
       </View>

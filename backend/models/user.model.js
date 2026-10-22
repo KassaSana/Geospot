@@ -7,7 +7,7 @@ const UserSchema = new mongoose.Schema({
     uid: { type: String, required: true, unique: true },
     profilePicture: {
         type: String,
-        default: "https://res.cloudinary.com/dbmpdoet6/image/upload/v1744226231/jxz9tcyulimodvceq47f.png"
+        default: "" // empty shows the default avatar in the app
     },
     bio: { type: String, default: "" },
     firstName: { type: String },
