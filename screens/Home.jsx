@@ -13,6 +13,8 @@ const Home = ({ navigation }) => {
   const [commentModalVisible, setCommentModalVisible] = useState(false);
   const [selectedPostId, setSelectedPostId] = useState(null);
   const [showComments, setShowComments] = useState({});
+  const [feedState, setFeedState] = useState('loading'); // loading | ready | error
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     getSessionUser()
@@ -24,9 +26,11 @@ const Home = ({ navigation }) => {
     try {
       const path = activeTab === 'friends' ? '/friendsFeed' : '/localFeed/Gainesville';
       setPosts(await api(path));
+      setFeedState('ready');
     } catch (error) {
       if (!(await handleAuthError(error, navigation))) {
         console.error('Error fetching posts:', error);
+        setFeedState('error');
       }
     }
   }, [activeTab, navigation]);
@@ -36,6 +40,20 @@ const Home = ({ navigation }) => {
       fetchPosts();
     }, [fetchPosts])
   );
+
+  const handleRefresh = () => {
+    setRefreshing(true);
+    fetchPosts().finally(() => setRefreshing(false));
+  };
+
+  let emptyMessage = null;
+  if (feedState === 'error') {
+    emptyMessage = "Couldn't load posts. Pull down to try again.";
+  } else if (feedState === 'ready') {
+    emptyMessage = activeTab === 'friends'
+      ? 'No posts from friends yet. Posts from people you follow who follow you back show up here.'
+      : "No posts here yet. Find today's spot on the Map and share a photo!";
+  }
 
   const handleLike = async (postId) => {
     if (!user) return;
@@ -193,7 +211,10 @@ const Home = ({ navigation }) => {
           </View>
         )}
         keyExtractor={(item) => item._id}
-        contentContainerStyle={{ paddingBottom: 40 }}
+        contentContainerStyle={{ paddingBottom: 40, flexGrow: 1 }}
+        refreshing={refreshing}
+        onRefresh={handleRefresh}
+        ListEmptyComponent={emptyMessage && <Text style={styles.emptyText}>{emptyMessage}</Text>}
       />
       
       <Modal
@@ -235,6 +256,13 @@ const Home = ({ navigation }) => {
 };
 
 const styles = StyleSheet.create({
+  emptyText: {
+    color: '#a0aec0',
+    fontSize: 16,
+    textAlign: 'center',
+    marginTop: 60,
+    paddingHorizontal: 30,
+  },
   container: {
     backgroundColor: '#2d3748',
     flex: 1,
