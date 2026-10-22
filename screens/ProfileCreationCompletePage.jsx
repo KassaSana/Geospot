@@ -1,15 +1,20 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { useNavigation } from "@react-navigation/native";
+import { getSessionUser } from "../api";
 
 const ProfileCreationCompletePage = () => {
   const navigation = useNavigation();
 
-  const handleContinue = () => {
+  // Signup already logged the user in, so go straight to their profile
+  const handleContinue = async () => {
+    const user = await getSessionUser();
     navigation.reset({
       index: 0,
-      routes: [{ name: 'Login' }],
-    }); 
+      routes: user
+        ? [{ name: 'HomeTabs', params: { screen: 'UserProfilePage', params: { email: user.email } } }]
+        : [{ name: 'Login' }],
+    });
   };
 
   return (
@@ -18,7 +23,7 @@ const ProfileCreationCompletePage = () => {
       <Text style={styles.subtitle}>You&apos;re all set! Click below to continue.</Text>
 
       <TouchableOpacity onPress={handleContinue} style={styles.button}>
-        <Text style={styles.buttonText}>Continue to Log In</Text>
+        <Text style={styles.buttonText}>Go to My Profile</Text>
       </TouchableOpacity>
     </View>
   );

@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, Image, TouchableOpacity, Alert, FlatList, StyleSheet, TextInput, Modal } from 'react-native';
-import * as SecureStore from 'expo-secure-store';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
+import { api, getSessionUser, handleAuthError } from '../api';
 
 const Home = ({ navigation }) => {
   const [activeTab, setActiveTab] = useState('friends');
@@ -14,50 +14,19 @@ const Home = ({ navigation }) => {
   const [showComments, setShowComments] = useState({});
 
   useEffect(() => {
-    const loadUser = async () => {
-      try {
-        const rawUser = await SecureStore.getItemAsync('user');
-        if (rawUser) {
-          setUser(JSON.parse(rawUser));
-        }
-      } catch (error) {
-        console.error('Error loading user:', error);
-      }
-    };
-    loadUser();
+    getSessionUser()
+      .then(setUser)
+      .catch((error) => console.error('Error loading user:', error));
   }, []);
 
   const fetchPosts = useCallback(async () => {
     try {
-      const token = await SecureStore.getItemAsync('token');
-      const rawUser = await SecureStore.getItemAsync('user');
-
-      if (!rawUser) {
-        console.warn('User info not found in SecureStore. Redirecting to login...');
-        await SecureStore.deleteItemAsync('token');
-        navigation.replace('Login');
-        return;
-      }
-
-      const userInfo = JSON.parse(rawUser);
-      let endpoint = '';
-
-      if (activeTab === 'friends') {
-        endpoint = `https://geospotbackend.onrender.com/friendsFeed/${userInfo.uid}`;
-      } else {
-        endpoint = `https://geospotbackend.onrender.com/localFeed/${userInfo.location || 'Gainesville'}`;
-      }
-
-      const response = await fetch(endpoint, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
-      const data = await response.json();
-      setPosts(data);
+      const path = activeTab === 'friends' ? '/friendsFeed' : '/localFeed/Gainesville';
+      setPosts(await api(path));
     } catch (error) {
-      console.error('Error fetching posts:', error);
+      if (!(await handleAuthError(error, navigation))) {
+        console.error('Error fetching posts:', error);
+      }
     }
   }, [activeTab, navigation]);
 
@@ -68,43 +37,19 @@ const Home = ({ navigation }) => {
   );
 
   const handleLike = async (postId) => {
-    if (!user) {
-      console.log("Cannot like: No user logged in");
-      return;
-    }
-    
-    console.log(`Attempting to like post: ${postId}`);
-    
+    if (!user) return;
+
     try {
-      const response = await fetch('https://geospotbackend.onrender.com/likePost', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ 
-          postId: postId,
-          userId: user.uid 
-        }),
-      });
-      
-      if (!response.ok) {
-        console.error(`Error liking post: ${response.status}`);
-        Alert.alert('Error', 'Unable to like post');
-        return;
-      }
-      
-      const result = await response.json();
-      console.log('Like result:', result);
-      
-      // Update posts state to reflect the like
-      setPosts(currentPosts => 
+      await api('/likePost', { method: 'POST', body: { postId } });
+
+      setPosts(currentPosts =>
         currentPosts.map(post => {
           if (post._id === postId) {
             const isLiked = post.likes?.includes(user.uid);
             return {
               ...post,
-              likes: isLiked 
-                ? post.likes.filter(id => id !== user.uid) 
+              likes: isLiked
+                ? post.likes.filter(id => id !== user.uid)
                 : [...(post.likes || []), user.uid]
             };
           }
@@ -112,8 +57,9 @@ const Home = ({ navigation }) => {
         })
       );
     } catch (error) {
-      console.error('Error liking post:', error);
-      Alert.alert('Error', 'Unable to like post');
+      if (!(await handleAuthError(error, navigation))) {
+        Alert.alert('Error', error.message || 'Unable to like post');
+      }
     }
   };
 
@@ -124,57 +70,28 @@ const Home = ({ navigation }) => {
   };
 
   const handleAddComment = async () => {
-    if (!commentText.trim()) {
-      return;
-    }
-    
-    if (!user) {
-      console.log("Cannot add comment: No user logged in");
-      return;
-    }
-    
+    if (!commentText.trim()) return;
+
     try {
-      const response = await fetch('https://geospotbackend.onrender.com/addComment', {
+      const result = await api('/addComment', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          postId: selectedPostId,
-          userId: user.uid,
-          username: user.username,
-          userProfilePicture: user.profilePicture || 'https://via.placeholder.com/40',
-          text: commentText,
-        }),
+        body: { postId: selectedPostId, text: commentText },
       });
-      
-      if (!response.ok) {
-        console.error(`Error adding comment: ${response.status}`);
-        Alert.alert('Error', 'Unable to add comment');
-        return;
-      }
-      
-      const result = await response.json();
-      console.log('Comment result:', result);
-      
-      // Update posts state to include the new comment
-      setPosts(currentPosts => 
-        currentPosts.map(post => {
-          if (post._id === selectedPostId) {
-            return {
-              ...post,
-              comments: [...(post.comments || []), result.comment]
-            };
-          }
-          return post;
-        })
+
+      setPosts(currentPosts =>
+        currentPosts.map(post =>
+          post._id === selectedPostId
+            ? { ...post, comments: [...(post.comments || []), result.comment] }
+            : post
+        )
       );
-      
+
       setCommentText('');
       setCommentModalVisible(false);
     } catch (error) {
-      console.error('Error adding comment:', error);
-      Alert.alert('Error', 'Unable to add comment');
+      if (!(await handleAuthError(error, navigation))) {
+        Alert.alert('Error', error.message || 'Unable to add comment');
+      }
     }
   };
 

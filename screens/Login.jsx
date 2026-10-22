@@ -2,8 +2,7 @@ import React, { useState } from "react";
 import { View, Text, TextInput, TouchableOpacity, StyleSheet } from "react-native";
 import { FontAwesome } from '@expo/vector-icons';
 import { useNavigation } from "@react-navigation/native";
-import axios from "axios";
-import * as SecureStore from 'expo-secure-store';
+import { api, saveSession } from "../api";
 
 
 
@@ -22,30 +21,14 @@ const Login = () => {
     }
 
     try {
-      const result = await axios.post('https://geospotbackend.onrender.com/login', { email, password });
-  
-      if (result.data.message === "Success") {
-        const user = {
-          uid: result.data.user.uid,
-          email: result.data.user.email,
-          username: result.data.user.username,
-        };
-        
-        await SecureStore.deleteItemAsync('user');
-        console.log(" Cleared previous user from SecureStore");
-        await SecureStore.setItemAsync('user', JSON.stringify(user));
-        console.log(" User saved to SecureStore");
-  
-        navigation.replace('HomeTabs', {
-          screen: 'UserProfilePage',
-          params: { email: user.email }
-        });
-      } else {
-        setError(result.data.message || "Invalid credentials. Please try again.");
-      }
+      const session = await api('/login', { method: 'POST', body: { email, password } });
+      await saveSession(session);
+      navigation.replace('HomeTabs', {
+        screen: 'UserProfilePage',
+        params: { email: session.user.email }
+      });
     } catch (err) {
-      console.error(err);
-      setError("An error occurred. Please try again later.");
+      setError(err.message || "An error occurred. Please try again later.");
     }
   };
   

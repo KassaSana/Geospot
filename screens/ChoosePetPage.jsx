@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { View, Text, TouchableOpacity, StyleSheet, Alert, Image, FlatList } from "react-native";
 import { useNavigation, useRoute } from "@react-navigation/native"; 
-import axios from 'axios';
+import { api } from '../api';
 
 
 
@@ -44,16 +44,7 @@ const ChoosePetPage = () => {
       try {
         const chosenPetImageURL = monsterImages[selectedPet];  
   
-        console.log("Chosen pet URL:", chosenPetImageURL);
-  
-        await axios.post('https://geospotbackend.onrender.com/savePet', {
-          email: email,
-          selectedPet: chosenPetImageURL,   
-          petLevel: 1,
-          petName: "No Name",
-          petCurrency: 0
-        
-        });
+        await api('/savePet', { method: 'POST', body: { selectedPet: chosenPetImageURL } });
   
         navigation.navigate("ProfileCreationCompletePage", { email, pet: chosenPetImageURL }); 
   

@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { View, Text, TextInput, TouchableOpacity, StyleSheet } from "react-native";
 import { FontAwesome } from '@expo/vector-icons';
 import { useNavigation } from "@react-navigation/native";
-import axios from 'axios';
+import { api, saveSession } from '../api';
 
 
 const SignUp = () => {
@@ -12,7 +12,7 @@ const SignUp = () => {
   const navigation = useNavigation();
   const [error, setError] = useState("");
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     setError("");
   
     // Basic email and password validation
@@ -33,20 +33,13 @@ const SignUp = () => {
       return;
     }
   
-    // If all validations pass, proceed with API call
-    axios.post('https://geospotbackend.onrender.com/signup', { username, email, password })
-      .then(result => {
-        console.log(result);
-        navigation.navigate('CreateProfile', { email: email });
-      })
-      .catch(err => {
-        console.error(err);
-        if (err.response?.data?.message) {
-          setError(err.response.data.message);
-        } else {
-          setError("An error occurred. Please try again.");
-        }
-      });
+    try {
+      const session = await api('/signup', { method: 'POST', body: { username, email, password } });
+      await saveSession(session);
+      navigation.navigate('CreateProfile', { email: email });
+    } catch (err) {
+      setError(err.message || "An error occurred. Please try again.");
+    }
   };
   
   
