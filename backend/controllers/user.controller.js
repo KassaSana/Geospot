@@ -34,7 +34,7 @@ const getUserProfile = async (req, res) => {
     );
 
     const enrichedUser = {
-      ...user.toObject(),
+      ...user.profileFor(req.user.uid),
       followers: populatedFollowers,
       following: populatedFollowing,
       streak: currentStreak(user.streak, user.lastPostDay),

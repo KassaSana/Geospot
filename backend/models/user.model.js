@@ -59,4 +59,15 @@ const hideSecrets = (doc, ret) => {
 UserSchema.set('toJSON', { transform: hideSecrets });
 UserSchema.set('toObject', { transform: hideSecrets });
 
+// The profile as viewerUid may see it: your name and birthday are only shown to you
+UserSchema.methods.profileFor = function (viewerUid) {
+  const profile = this.toObject();
+  if (viewerUid !== this.uid) {
+    delete profile.firstName;
+    delete profile.lastName;
+    delete profile.birthday;
+  }
+  return profile;
+};
+
 module.exports = mongoose.model("User", UserSchema);

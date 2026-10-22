@@ -110,6 +110,24 @@ test('profile endpoints never expose secrets', async () => {
   }
 });
 
+test('only you can see your name and birthday', async () => {
+  const alice = await signup('alice');
+  const bob = await signup('bob');
+  await as(alice).post('/profileDetails').send({ firstName: 'Alice', lastName: 'Gator', birthday: '2004-05-06' });
+
+  const own = await as(alice).post('/UserProfilePage').send({ email: 'alice@test.dev' });
+  assert.equal(own.body.firstName, 'Alice');
+
+  const byEmail = await as(bob).get('/user/alice@test.dev');
+  const profile = await as(bob).post('/UserProfilePage').send({ email: 'alice@test.dev' });
+  for (const body of [byEmail.body, profile.body]) {
+    assert.equal(body.username, 'alice');
+    assert.equal(body.firstName, undefined);
+    assert.equal(body.lastName, undefined);
+    assert.equal(body.birthday, undefined);
+  }
+});
+
 test('profile details from onboarding are saved', async () => {
   const alice = await signup('alice');
   const res = await as(alice).post('/profileDetails').send({ firstName: 'Alice', lastName: 'Gator', birthday: '2004-05-06' });

@@ -290,7 +290,7 @@ app.get('/user/:email', async (req, res) => {
   try {
     const user = await UserModel.findOne({ email: req.params.email });
     if (user) {
-      res.json(user);
+      res.json(user.profileFor(req.user.uid));
     } else {
       res.status(404).json({ message: "User not found" });
     }
