@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback } from "react";
-import { View, Text, Image, StyleSheet, ScrollView, TouchableOpacity, Modal, TextInput } from "react-native";
+import { View, Text, Image, StyleSheet, ScrollView, TouchableOpacity, Modal, TextInput, ActivityIndicator } from "react-native";
 import { useRoute, useNavigation, useFocusEffect } from "@react-navigation/native";
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
@@ -59,13 +59,10 @@ const UserProfilePage = () => {
       }
       setIsOwnProfile(currentUser.email === viewedEmail);
 
-      const [viewedUserData, currentUserData] = await Promise.all([
-        loadProfile(viewedEmail),
-        loadProfile(currentUser.email),
-      ]);
-
+      // One request: the viewed profile's followers say whether you follow them
+      const viewedUserData = await loadProfile(viewedEmail);
       setIsFollowingViewedUser(
-        (currentUserData.following || []).some(f => f.uid === viewedUserData.uid)
+        (viewedUserData.followers || []).some(f => f.uid === currentUser.uid)
       );
       showProfile(viewedUserData);
 
@@ -79,7 +76,7 @@ const UserProfilePage = () => {
     } catch (err) {
       if (!(await handleAuthError(err, navigation))) {
         console.error("Error loading profile:", err);
-        setError("Failed to load user data.");
+        setError("Couldn't load this profile.");
       }
     } finally {
       setLoading(false);
@@ -213,10 +210,22 @@ const UserProfilePage = () => {
   }
 
   if (loading) {
-    return <Text>Loading...</Text>;
+    return (
+      <View style={styles.statusContainer}>
+        <ActivityIndicator size="large" color="#68d391" />
+        <Text style={styles.statusText}>Loading profile...</Text>
+      </View>
+    );
   }
   if (error) {
-    return <Text>{error}</Text>;
+    return (
+      <View style={styles.statusContainer}>
+        <Text style={styles.statusText}>{error}</Text>
+        <TouchableOpacity style={styles.retryButton} onPress={() => { setLoading(true); fetchUserData(); }}>
+          <Text style={styles.retryButtonText}>Try Again</Text>
+        </TouchableOpacity>
+      </View>
+    );
   }
   return (
     <ScrollView style={styles.container}>
@@ -772,6 +781,30 @@ const UserProfilePage = () => {
 };
 
 const styles = StyleSheet.create({
+  statusContainer: {
+    flex: 1,
+    backgroundColor: '#2d3748',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  statusText: {
+    color: '#e2e8f0',
+    fontSize: 16,
+    marginTop: 12,
+    textAlign: 'center',
+  },
+  retryButton: {
+    backgroundColor: '#48bb78',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    marginTop: 16,
+  },
+  retryButtonText: {
+    color: '#1a202c',
+    fontWeight: 'bold',
+  },
   container: {
     flex: 1,
     backgroundColor: "#2d3748",
