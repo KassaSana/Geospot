@@ -1,12 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Modal, Alert } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Modal, Alert, Linking, Platform } from 'react-native';
 import MapView, { Marker, Polyline } from 'react-native-maps';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
-import polyline from '@mapbox/polyline';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation } from '@react-navigation/native';
-import { api, ApiError, handleAuthError } from '../api';
+import { api, ApiError, handleAuthError, uploadImage } from '../api';
 
 function getDistanceInMiles(lat1, lon1, lat2, lon2) {
   const toRad = (value) => (value * Math.PI) / 180;
@@ -28,12 +27,12 @@ const TODAY_CACHE_KEY = 'todaysSpot';
 const DAY_MS = 24 * 60 * 60 * 1000;
 const REFETCH_INTERVAL_MS = 15 * 1000;
 
-async function fetchWalkingRoute(from, to) {
-  const origin = `${from.latitude},${from.longitude}`;
-  const dest = `${to.latitude},${to.longitude}`;
-  const data = await api(`/directions?origin=${origin}&destination=${dest}`);
-  if (!data.points) return [];
-  return polyline.decode(data.points).map(([lat, lng]) => ({ latitude: lat, longitude: lng }));
+// Walking directions in the phone's own maps app, so the app needs no maps API key
+function openWalkingDirections({ latitude, longitude }) {
+  const url = Platform.OS === 'ios'
+    ? `http://maps.apple.com/?daddr=${latitude},${longitude}&dirflg=w`
+    : `https://www.google.com/maps/dir/?api=1&destination=${latitude},${longitude}&travelmode=walking`;
+  Linking.openURL(url).catch(() => Alert.alert('Could not open maps'));
 }
 
 // Today's spot from the server, falling back to the cached copy when offline.
@@ -73,7 +72,6 @@ const MapScreen = () => {
   const [refreshKey, setRefreshKey] = useState(0);
   const [now, setNow] = useState(() => Date.now());
   const [modalVisible, setModalVisible] = useState(false);
-  const [routeCoords, setRouteCoords] = useState([]);
   const [offlineMode, setOfflineMode] = useState(false);
   const [offlineModalVisible, setOfflineModalVisible] = useState(false);
   const [lastCacheUpdateTime, setLastCacheUpdateTime] = useState(null);
@@ -140,31 +138,6 @@ const MapScreen = () => {
     return () => clearInterval(interval);
   }, [today]);
 
-  useEffect(() => {
-    if (!location || !destination) return;
-
-    let cancelled = false;
-    fetchWalkingRoute(location, destination)
-      .then(async (coords) => {
-        if (cancelled) return;
-        setRouteCoords([]);
-        if (!coords.length) {
-          console.warn('No route found');
-          return;
-        }
-        // Animate the route in one point at a time
-        for (let i = 1; i <= coords.length && !cancelled; i++) {
-          setRouteCoords(coords.slice(0, i));
-          await new Promise((res) => setTimeout(res, 20));
-        }
-      })
-      .catch((err) => console.error('Failed to fetch directions:', err));
-
-    return () => {
-      cancelled = true;
-    };
-  }, [location, destination]);
-
   let revealLabel;
   if (testSpot) {
     revealLabel = `🧪 Test spot: ${testSpot.name}`;
@@ -187,19 +160,10 @@ const MapScreen = () => {
         return;
       }
 
-      const result = await ImagePicker.launchCameraAsync({ allowsEditing: true, quality: 0.7, base64: true });
+      const result = await ImagePicker.launchCameraAsync({ allowsEditing: true });
       if (result.canceled) return;
 
-      const asset = result.assets?.[0];
-      if (!asset?.base64) {
-        Alert.alert("Error", "Image capture failed or base64 not found.");
-        return;
-      }
-
-      const { imageUrl } = await api('/uploadPhoto', {
-        method: 'POST',
-        body: { image: `data:image/jpeg;base64,${asset.base64}` },
-      });
+      const { imageUrl } = await uploadImage('/uploadPhoto', result.assets[0]);
 
       await api('/createPost', {
         method: 'POST',
@@ -261,8 +225,13 @@ const MapScreen = () => {
         showsUserLocation={true}
         followsUserLocation={true}
       >
-        {isRevealed && routeCoords.length > 0 && (
-          <Polyline coordinates={routeCoords} strokeColor="#00BFFF" strokeWidth={4} />
+        {isRevealed && (
+          <Polyline
+            coordinates={[{ latitude: location.latitude, longitude: location.longitude }, destination]}
+            strokeColor="#00BFFF"
+            strokeWidth={3}
+            lineDashPattern={[8, 6]}
+          />
         )}
         {isRevealed && (
           <Marker coordinate={destination} title={spot.name} pinColor="green" />
@@ -275,6 +244,11 @@ const MapScreen = () => {
           <Text style={styles.distanceLabel}>
           📍 {distanceToDestination} miles away
           </Text>
+        )}
+        {isRevealed && (
+          <TouchableOpacity style={styles.directionsButton} onPress={() => openWalkingDirections(destination)}>
+            <Text style={styles.directionsButtonText}>🚶 Directions</Text>
+          </TouchableOpacity>
         )}
       </View>
 
@@ -405,6 +379,18 @@ const styles = StyleSheet.create({
     padding: 8,
     borderRadius: 15,
     overflow: 'hidden',
+  },
+  directionsButton: {
+    backgroundColor: '#00BFFF',
+    marginTop: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 15,
+  },
+  directionsButtonText: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: 'bold',
   },
   hintButton: {
     position: 'absolute',

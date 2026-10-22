@@ -1,6 +1,7 @@
 require('dotenv').config({ quiet: true });
 const mongoose = require('mongoose');
 const app = require('./app');
+const { seedIfEmpty } = require('./seedLocations');
 
 if (!process.env.JWT_SECRET) {
   throw new Error('JWT_SECRET must be set (see .env.example)');
@@ -8,7 +9,8 @@ if (!process.env.JWT_SECRET) {
 
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log('MongoDB connected'))
-  .catch((err) => console.error('MongoDB connection error:', err));
+  .then(seedIfEmpty)
+  .catch((err) => console.error('Database startup error:', err));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {

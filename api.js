@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
+import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 
 // expo-secure-store has no web implementation; the web build (dev only) uses localStorage
 const storage = Platform.OS === 'web'
@@ -10,8 +11,12 @@ const storage = Platform.OS === 'web'
     }
   : SecureStore;
 
-// Point the app at a local backend with EXPO_PUBLIC_API_URL=http://<your-ip>:3000
-export const API_URL = process.env.EXPO_PUBLIC_API_URL || 'https://geospotbackend.onrender.com';
+// Point the app at a local backend with EXPO_PUBLIC_API_URL=http://<your-ip>:3000.
+// The default is the Render service from render.yaml.
+export const API_URL = process.env.EXPO_PUBLIC_API_URL || 'https://geospot-kassasana.onrender.com';
+
+// Uploaded photos are stored as API paths ("/images/<id>"); older ones are full URLs
+export const mediaUrl = (url) => (url?.startsWith('/') ? `${API_URL}${url}` : url);
 
 export class ApiError extends Error {
   constructor(message, status) {
@@ -38,6 +43,19 @@ export async function api(path, { method = 'GET', body } = {}) {
     throw new ApiError(data?.message || `Request failed (${response.status})`, response.status);
   }
   return data;
+}
+
+// Shrinks a picked photo (an ImagePicker asset) and posts it to path as { image }.
+// Photos are stored in the database, so they are kept small.
+const MAX_PHOTO_WIDTH = 1080;
+export async function uploadImage(path, asset) {
+  const context = ImageManipulator.manipulate(asset.uri);
+  if (asset.width > MAX_PHOTO_WIDTH) {
+    context.resize({ width: MAX_PHOTO_WIDTH });
+  }
+  const image = await context.renderAsync();
+  const { base64 } = await image.saveAsync({ compress: 0.7, format: SaveFormat.JPEG, base64: true });
+  return api(path, { method: 'POST', body: { image: `data:image/jpeg;base64,${base64}` } });
 }
 
 // The logged-in user is { uid, email, username }; the token proves it to the backend

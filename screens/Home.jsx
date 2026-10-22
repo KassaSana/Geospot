@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, Image, TouchableOpacity, Alert, FlatList, StyleSheet, TextInput, Modal } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
-import { api, getSessionUser, handleAuthError } from '../api';
+import { api, getSessionUser, handleAuthError, mediaUrl } from '../api';
 import { avatarImage } from '../images';
 
 const Home = ({ navigation }) => {
@@ -129,7 +129,7 @@ const Home = ({ navigation }) => {
               </View>
             </View>
 
-            <Image source={{ uri: item.imageUrl }} style={styles.postImage} />
+            <Image source={{ uri: mediaUrl(item.imageUrl) }} style={styles.postImage} />
             <View style={styles.postInfo}>
               <Text style={styles.description}>{item.description}</Text>
               

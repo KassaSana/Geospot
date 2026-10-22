@@ -3,7 +3,7 @@ import { View, Text, Image, StyleSheet, ScrollView, TouchableOpacity, Modal, Tex
 import { useRoute, useNavigation, useFocusEffect } from "@react-navigation/native";
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import { api, getSessionUser, updateSessionUser, clearSession, handleAuthError } from '../api';
+import { api, getSessionUser, updateSessionUser, clearSession, handleAuthError, mediaUrl, uploadImage } from '../api';
 import { avatarImage, petImage, PET_BACKGROUND } from '../images';
 
 
@@ -71,7 +71,7 @@ const UserProfilePage = () => {
 
       const posts = await api(`/userPosts/${viewedUserData.uid}`);
       setPhotoUrls(posts.map(post => ({
-        url: post.imageUrl,
+        url: mediaUrl(post.imageUrl),
         postedBy: post.username,
         date: new Date(post.date).toLocaleDateString('en-US'),
       })));
@@ -106,15 +106,12 @@ const UserProfilePage = () => {
       mediaTypes: 'images',
       allowsEditing: true,
       aspect: [1, 1],
-      quality: 1,
-      base64: true,
     });
 
     if (pickerResult.canceled) return;
 
     try {
-      const base64Img = `data:image/jpg;base64,${pickerResult.assets[0].base64}`;
-      await api('/updateProfilePicture', { method: 'POST', body: { image: base64Img } });
+      await uploadImage('/updateProfilePicture', pickerResult.assets[0]);
       showProfile(await loadProfile(viewedEmail));
     } catch (err) {
       reportError('Error updating profile picture:', err);

@@ -39,8 +39,16 @@ async function seed() {
   }
 }
 
+// Adds the seed locations to an empty database, so a fresh deploy has a daily spot
+async function seedIfEmpty() {
+  if (await LocationModel.estimatedDocumentCount() === 0) {
+    await LocationModel.insertMany(locations);
+    console.log(`Added ${locations.length} seed locations`);
+  }
+}
+
 if (require.main === module) {
   seed();
 }
 
-module.exports = { locations };
+module.exports = { locations, seedIfEmpty };

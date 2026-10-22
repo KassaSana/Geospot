@@ -10,6 +10,8 @@ const mailer = require('../lib/mailer');
 const UserModel = require('../models/user.model');
 const LocationModel = require('../models/Location');
 const { dayKey, revealTime } = require('../lib/spotClock');
+const { MAX_IMAGE_BYTES } = require('../lib/images');
+const { locations, seedIfEmpty } = require('../seedLocations');
 
 let mongo;
 
@@ -300,8 +302,52 @@ test('locations are listed', async () => {
   assert.deepEqual(res.body.map(l => l.name), ['Lake Alice']);
 });
 
-test('directions rejects anything that is not lat,lng', async () => {
+test('photos are stored in the database and served without a token', async () => {
   const alice = await signup('alice');
-  const res = await as(alice).get('/directions?origin=1,2&destination=1,2%26key=x');
-  assert.equal(res.status, 400);
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+
+  const upload = await as(alice).post('/uploadPhoto').send({ image: `data:image/png;base64,${png.toString('base64')}` });
+  assert.equal(upload.status, 200);
+  assert.match(upload.body.imageUrl, /^\/images\/[0-9a-f-]{36}$/);
+
+  const served = await request(app).get(upload.body.imageUrl);
+  assert.equal(served.status, 200);
+  assert.equal(served.headers['content-type'], 'image/png');
+  assert.deepEqual(served.body, png);
+
+  const profile = await as(alice).post('/updateProfilePicture').send({ image: `data:image/png;base64,${png.toString('base64')}` });
+  assert.match(profile.body.user.profilePicture, /^\/images\//);
+});
+
+test('uploads must be images under the size limit', async () => {
+  const alice = await signup('alice');
+  const notImage = await as(alice).post('/uploadPhoto').send({ image: 'data:text/html;base64,PGgxPmhpPC9oMT4=' });
+  assert.equal(notImage.status, 400);
+
+  const huge = Buffer.alloc(MAX_IMAGE_BYTES + 1).toString('base64');
+  const tooBig = await as(alice).post('/uploadPhoto').send({ image: `data:image/jpeg;base64,${huge}` });
+  assert.equal(tooBig.status, 400);
+
+  assert.equal((await request(app).get('/images/nope')).status, 404);
+});
+
+test('a post needs a photo', async () => {
+  const alice = await signup('alice');
+  assert.equal((await as(alice).post('/createPost').send({ description: 'hi' })).status, 400);
+});
+
+test('password reset says so when email is not set up in production', async (t) => {
+  const saved = { NODE_ENV: process.env.NODE_ENV, SMTP_URL: process.env.SMTP_URL };
+  t.after(() => Object.assign(process.env, saved));
+  process.env.NODE_ENV = 'production';
+  delete process.env.SMTP_URL;
+
+  const res = await request(app).post('/forgotPassword').send({ email: 'alice@test.dev' });
+  assert.equal(res.status, 503);
+});
+
+test('seed locations are added to an empty database only', async () => {
+  await seedIfEmpty();
+  await seedIfEmpty();
+  assert.equal(await LocationModel.countDocuments(), locations.length);
 });

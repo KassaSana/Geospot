@@ -1,3 +1,5 @@
+import { mediaUrl } from './api';
+
 // Pet, avatar and background images ship with the app.
 // Accounts made before that saved Cloudinary URLs for them, so those URLs map to the local copies.
 
@@ -58,5 +60,5 @@ export function avatarImage(url) {
   if (!url || legacyImageId(url) === LEGACY_DEFAULT_AVATAR) {
     return DEFAULT_AVATAR;
   }
-  return { uri: url };
+  return { uri: mediaUrl(url) };
 }

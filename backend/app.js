@@ -4,7 +4,8 @@ const { randomUUID, randomInt } = require('crypto');
 const bcrypt = require('bcryptjs');
 const UserModel = require('./models/user.model');
 const PostModel = require('./models/post.model');
-const cloudinary = require('./cloudinary');
+const ImageModel = require('./models/image.model');
+const { saveImage, ImageError } = require('./lib/images');
 const mailer = require('./lib/mailer');
 const { getUserProfile } = require('./controllers/user.controller');
 const locationsRouter = require('./routes/locations');
@@ -35,7 +36,7 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '4mb' })); // room for one 2 MB image as base64
 // Express 5 leaves req.body undefined when there is no JSON body; keep the Express 4 behavior
 app.use((req, res, next) => {
   req.body ??= {};
@@ -43,6 +44,24 @@ app.use((req, res, next) => {
 });
 
 // ---- Public routes ----
+
+app.get('/health', (req, res) => res.json({ ok: true }));
+
+// Served without a token so the app's <Image> can load them; ids are random UUIDs
+app.get('/images/:id', async (req, res) => {
+  try {
+    const image = await ImageModel.findById(req.params.id);
+    if (!image) return res.status(404).json({ message: "Image not found" });
+    res.set({
+      'Content-Type': image.contentType,
+      'Cache-Control': 'public, max-age=31536000, immutable',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    res.send(image.data);
+  } catch (err) {
+    serverError(res, '/images', err);
+  }
+});
 
 app.post('/signup', async (req, res) => {
   try {
@@ -108,6 +127,9 @@ app.post('/forgotPassword', async (req, res) => {
   const { email } = req.body;
   if (!email) {
     return res.status(400).json({ message: "Email is required" });
+  }
+  if (!mailer.canSend()) {
+    return res.status(503).json({ message: "Password reset by email isn't set up on this server yet" });
   }
 
   try {
@@ -228,6 +250,9 @@ app.post('/updatePetName', async (req, res) => {
 
 app.post('/createPost', async (req, res) => {
   const { imageUrl, description, location } = req.body;
+  if (!imageUrl) {
+    return res.status(400).json({ message: "A post needs a photo" });
+  }
 
   try {
     const user = await findCurrentUser(req);
@@ -360,13 +385,10 @@ app.post('/updateProfilePicture', async (req, res) => {
   if (!image) return res.status(400).json({ message: "No image provided" });
 
   try {
-    const uploadResponse = await cloudinary.uploader.upload(image, {
-      upload_preset: 'ml_default',
-    });
-
+    const profilePicture = await saveImage(image, req.user.uid);
     const user = await UserModel.findOneAndUpdate(
       { uid: req.user.uid },
-      { profilePicture: uploadResponse.secure_url },
+      { profilePicture },
       { returnDocument: 'after' }
     );
 
@@ -376,6 +398,7 @@ app.post('/updateProfilePicture', async (req, res) => {
       res.status(404).json({ message: "User not found" });
     }
   } catch (err) {
+    if (err instanceof ImageError) return res.status(400).json({ message: err.message });
     serverError(res, '/updateProfilePicture', err);
   }
 });
@@ -446,12 +469,9 @@ app.post('/uploadPhoto', async (req, res) => {
   try {
     if (!image) return res.status(400).json({ message: "No image provided" });
 
-    const uploadResponse = await cloudinary.uploader.upload(image, {
-      upload_preset: 'ml_default',
-    });
-
-    res.json({ imageUrl: uploadResponse.secure_url });
+    res.json({ imageUrl: await saveImage(image, req.user.uid) });
   } catch (err) {
+    if (err instanceof ImageError) return res.status(400).json({ message: err.message });
     serverError(res, '/uploadPhoto', err);
   }
 });
@@ -554,32 +574,6 @@ app.get('/comments/:postId', async (req, res) => {
     res.json(post.comments);
   } catch (err) {
     serverError(res, '/comments', err);
-  }
-});
-
-// Walking directions, proxied so the Google Maps key stays on the server
-const COORD_PATTERN = /^-?\d+(\.\d+)?,-?\d+(\.\d+)?$/;
-
-app.get('/directions', async (req, res) => {
-  const { origin, destination } = req.query;
-
-  if (!COORD_PATTERN.test(origin || '') || !COORD_PATTERN.test(destination || '')) {
-    return res.status(400).json({ message: "origin and destination must be lat,lng" });
-  }
-
-  try {
-    const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${origin}&destination=${destination}&mode=walking&key=${process.env.GOOGLE_MAPS_API_KEY}`;
-    const response = await fetch(url);
-    const data = await response.json();
-
-    if (data.status !== 'OK' && data.status !== 'ZERO_RESULTS') {
-      console.error('Directions API error:', data.status, data.error_message);
-      return res.status(502).json({ message: "Directions lookup failed" });
-    }
-
-    res.json({ points: data.routes?.[0]?.overview_polyline?.points ?? null });
-  } catch (err) {
-    serverError(res, '/directions', err);
   }
 });
 

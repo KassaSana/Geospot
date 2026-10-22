@@ -5,13 +5,12 @@ const { MongoMemoryServer } = require('mongodb-memory-server');
 
 process.env.JWT_SECRET ??= 'local-dev-secret';
 const app = require('../app');
-const LocationModel = require('../models/Location');
-const { locations } = require('../seedLocations');
+const { seedIfEmpty } = require('../seedLocations');
 
 (async () => {
   const mongo = await MongoMemoryServer.create();
   await mongoose.connect(mongo.getUri());
-  await LocationModel.insertMany(locations);
+  await seedIfEmpty();
 
   const PORT = process.env.PORT || 3000;
   app.listen(PORT, () => {

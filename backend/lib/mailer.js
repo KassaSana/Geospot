@@ -8,6 +8,11 @@ const getTransport = () => {
 
 // Called through the module object so tests can replace it
 const mailer = {
+  // Without SMTP_URL, development prints codes to the log; production can't send them
+  canSend() {
+    return Boolean(process.env.SMTP_URL) || process.env.NODE_ENV !== 'production';
+  },
+
   async sendPasswordResetCode(email, code) {
     if (!process.env.SMTP_URL) {
       if (process.env.NODE_ENV === 'production') {
