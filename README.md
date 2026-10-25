@@ -69,6 +69,7 @@ The app targets **Expo SDK 58**, so install the current **Expo Go** from the App
 ## Development
 
 - `npm run check` lints the app and backend and runs the backend tests (they use an in-memory MongoDB, so no database is needed).
+- GitHub Actions (`.github/workflows/check.yml`) runs `npm run check` and an Android bundle build on every pull request and every push to `main`.
 - Quickest local setup: `cd backend && npm run dev:memory` starts the API with a throwaway in-memory database and the seed locations. Then run the app with `EXPO_PUBLIC_API_URL=http://<your computer's IP>:3000 npx expo start` (or `npx expo start --web` with `http://localhost:3000`).
 - To run the API against a real database: copy `backend/.env.example` to `backend/.env`, fill it in, then `cd backend && npm install && npm run dev`.
 - `cd backend && npm run seed` replaces the map locations with the seed list (a new database gets them automatically).

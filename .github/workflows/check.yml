@@ -1,0 +1,31 @@
+# Lint, backend tests and an Android bundle build on every push to main and every PR
+name: Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            backend/package-lock.json
+
+      - run: npm ci
+      - run: npm ci --prefix backend
+
+      # Lint for the app and backend, then backend tests against an in-memory MongoDB
+      - run: npm run check
+
+      - name: Android bundle builds
+        run: npx expo export --platform android --output-dir "$RUNNER_TEMP/expo-export"
