@@ -1,12 +1,10 @@
-import React, { useState, useEffect, useRef } from "react";
-import { View, Text, Image, StyleSheet, ScrollView, TouchableOpacity, Modal, TextInput } from "react-native";
-import { useRoute, useNavigation } from "@react-navigation/native";
+import React, { useState, useRef, useCallback } from "react";
+import { View, Text, Image, StyleSheet, ScrollView, TouchableOpacity, Modal, TextInput, ActivityIndicator } from "react-native";
+import { useRoute, useNavigation, useFocusEffect } from "@react-navigation/native";
 import { Ionicons } from '@expo/vector-icons';
-import axios from "axios";
 import * as ImagePicker from 'expo-image-picker';
-import * as SecureStore from 'expo-secure-store';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useIsFocused } from '@react-navigation/native';
+import { api, getSessionUser, updateSessionUser, clearSession, handleAuthError, mediaUrl, uploadImage } from '../api';
+import { avatarImage, petImage, PET_BACKGROUND } from '../images';
 
 
 const UserProfilePage = () => {
@@ -16,7 +14,6 @@ const UserProfilePage = () => {
   const [selectedPhoto, setSelectedPhoto] = useState(null);
   const [modalVisible, setModalVisible] = useState(false);
   const [bioInput, setBioInput] = useState('');
-  const [editingBio, setEditingBio] = useState(false);
   const [editProfileModalVisible, setEditProfileModalVisible] = useState(false);
   const [usernameInput, setUsernameInput] = useState('');
   const [settingsModalVisible, setSettingsModalVisible] = useState(false);
@@ -29,7 +26,6 @@ const UserProfilePage = () => {
   const debounceTimeout = useRef(null);
   const navigation = useNavigation();
   const [isOwnProfile, setIsOwnProfile] = useState(false);
-  const [currentUserUid, setCurrentUserUid] = useState(null);
   const [isFollowingViewedUser, setIsFollowingViewedUser] = useState(false);
   const [followersModalVisible, setFollowersModalVisible] = useState(false);
   const [followingModalVisible, setFollowingModalVisible] = useState(false);
@@ -37,316 +33,199 @@ const UserProfilePage = () => {
   const route = useRoute();
   const viewedEmail = route.params?.email;
 
-  const isFocused = useIsFocused();
 
-  useEffect(() => {
-    if (isFocused && viewedEmail) {
-      fetchUserData(); 
-    }
-  }, [isFocused, viewedEmail]);
+  const showProfile = useCallback((profile) => {
+    setUser(profile);
+    setBioInput(profile.bio || '');
+    setUsernameInput(profile.username || '');
+  }, []);
 
-  const fetchUserData = async () => {
-    if (!viewedEmail) {
-      setError("No email provided.");
-      setLoading(false);
-      return;
+  const loadProfile = (email) => api('/UserProfilePage', { method: 'POST', body: { email } });
+
+  // Shows the error, or sends the user to Login if their session expired
+  const reportError = useCallback(async (label, err) => {
+    if (!(await handleAuthError(err, navigation))) {
+      console.error(label, err);
+      alert(err.message || 'Something went wrong. Please try again.');
     }
-  
+  }, [navigation]);
+
+  const fetchUserData = useCallback(async () => {
     try {
-      const rawUser = await SecureStore.getItemAsync('user');
-      if (!rawUser) {
-        console.warn('No user found in SecureStore. Redirecting to login.');
+      const currentUser = await getSessionUser();
+      if (!currentUser) {
         navigation.replace('Login');
         return;
       }
+      setIsOwnProfile(currentUser.email === viewedEmail);
 
-      const currentUserParsed = JSON.parse(rawUser);
-      const currentUserEmail = currentUserParsed?.email;
-      const currentUid = currentUserParsed?.uid;
-      setCurrentUserUid(currentUid);
-      setIsOwnProfile(currentUserEmail === viewedEmail);
-  
-      // Fetch viewed user
-      const viewedUserResponse = await axios.post("https://geospotbackend.onrender.com/UserProfilePage", {
-        email: viewedEmail,
-      });
-      const viewedUserData = viewedUserResponse.data;
-  
-      // Fetch current user 
-      const currentUserResponse = await axios.post("https://geospotbackend.onrender.com/UserProfilePage", {
-        email: currentUserEmail,
-      });
-      const currentUserData = currentUserResponse.data;
-  
-      //Check if current user follows the viewed user
-      const followingArray = currentUserData.following || [];
-      const isFollowing = followingArray.some(f => {
-        if (typeof f === 'string') {
-          return f === viewedUserData.uid;
-        } else if (f?.uid) {
-          return f.uid === viewedUserData.uid;
-        }
-        return false;
-      });
-  
-      setIsFollowingViewedUser(isFollowing);
-  
-      //Set viewed user's data 
-      const cleanedFollowing = (viewedUserData.following || []).map(f =>
-        typeof f === 'string' ? { uid: f } : f
+      // One request: the viewed profile's followers say whether you follow them
+      const viewedUserData = await loadProfile(viewedEmail);
+      setIsFollowingViewedUser(
+        (viewedUserData.followers || []).some(f => f.uid === currentUser.uid)
       );
-  
-      setUser({
-        ...viewedUserData,
-        following: cleanedFollowing,
-      });
-  
-      setBioInput(viewedUserData.bio || '');
-      setUsernameInput(viewedUserData.username || '');
-  
-      // Fetch user's posts from PostModel
-      const postsResponse = await axios.get(`https://geospotbackend.onrender.com/userPosts/${viewedUserData.uid}`);
-      const posts = postsResponse.data || [];
+      showProfile(viewedUserData);
 
+      const posts = await api(`/userPosts/${viewedUserData.uid}`);
       setPhotoUrls(posts.map(post => ({
-        url: post.imageUrl,
+        url: mediaUrl(post.imageUrl),
         postedBy: post.username,
         date: new Date(post.date).toLocaleDateString('en-US'),
       })));
-
-            
+      setError(null);
     } catch (err) {
-      console.error("Error loading profile:", err);
-      setError("Failed to load user data.");
+      if (!(await handleAuthError(err, navigation))) {
+        console.error("Error loading profile:", err);
+        setError("Couldn't load this profile.");
+      }
     } finally {
       setLoading(false);
     }
-  };
-  
+  }, [viewedEmail, navigation, showProfile]);
 
-  useEffect(() => {
-    if (viewedEmail) {
-      fetchUserData();
-    }
-  }, [viewedEmail]);
-  
-  
+  useFocusEffect(
+    useCallback(() => {
+      if (viewedEmail) {
+        fetchUserData();
+      }
+    }, [viewedEmail, fetchUserData])
+  );
+
   const pickImage = async () => {
     const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
-  
+
     if (permissionResult.granted === false) {
       alert('Permission to access camera roll is required!');
       return;
     }
-  
+
     const pickerResult = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: 'images',
       allowsEditing: true,
       aspect: [1, 1],
-      quality: 1,
-      base64: true,
     });
-  
-    if (!pickerResult.canceled) {
-      const base64Img = `data:image/jpg;base64,${pickerResult.assets[0].base64}`;
-  
-      if (!user) {
-        console.error("User not loaded yet, cannot upload image.");
-        return;
-      }
-  
-      // Upload
-      axios.post('https://geospotbackend.onrender.com/updateProfilePicture', {
-        email: viewedEmail,
-        image: base64Img,
-      })
-      .then(response => {
-        console.log('Profile picture updated successfully');
-        // Refresh profile
-        axios.post('https://geospotbackend.onrender.com/UserProfilePage', { email: viewedEmail })
-          .then((result) => {
-            setUser(result.data);
-            setBioInput(result.data.bio || '');        
-            setUsernameInput(result.data.username || ''); 
-          })
-          .catch(err => {
-            console.error("Error reloading user profile:", err);
-          });
-      })
-      .catch(error => {
-        console.error('Error updating profile picture:', error);
-      });
+
+    if (pickerResult.canceled) return;
+
+    try {
+      await uploadImage('/updateProfilePicture', pickerResult.assets[0]);
+      showProfile(await loadProfile(viewedEmail));
+    } catch (err) {
+      reportError('Error updating profile picture:', err);
     }
   };
-  
+
   const handleSavePetName = async () => {
     try {
-      await axios.post('https://geospotbackend.onrender.com/updatePetName', {
-        email: viewedEmail,
-        petName: user.petName
-      });
+      await api('/updatePetName', { method: 'POST', body: { petName: user.petName } });
       alert('Pet name updated successfully!');
-  
-      // Refresh the user data after saving
-      axios.post("https://geospotbackend.onrender.com/UserProfilePage", { email: viewedEmail })
-        .then((result) => {
-          setUser(result.data);
-        })
-        .catch(err => {
-          console.error("Error refreshing user after pet name update:", err);
-        });
-  
-    } catch (error) {
-      console.error('Error updating pet name:', error);
-      alert('Failed to update pet name.');
+      setUser(await loadProfile(viewedEmail));
+    } catch (err) {
+      reportError('Error updating pet name:', err);
+    }
+  };
+
+  const handleSaveProfile = async () => {
+    try {
+      const { user: updated } = await api('/updateProfile', {
+        method: 'POST',
+        body: { username: usernameInput, bio: bioInput },
+      });
+      await updateSessionUser({ username: updated.username });
+      showProfile(await loadProfile(viewedEmail));
+      setEditProfileModalVisible(false);
+    } catch (err) {
+      reportError('Error updating profile:', err);
+    }
+  };
+
+  const searchUsers = async (query) => {
+    setIsSearching(true);
+    try {
+      setSearchResults(await api('/search', { method: 'POST', body: { username: query } }));
+    } catch (err) {
+      reportError('Error searching for users:', err);
+    } finally {
+      setIsSearching(false);
     }
   };
 
   const handleSearch = async () => {
-  if (searchQuery.trim() === '') return;
+    if (searchQuery.trim() === '') return;
+    await searchUsers(searchQuery);
+  };
 
-  setIsSearching(true);
-  try {
-    const response = await axios.post('https://geospotbackend.onrender.com/search', {
-      username: searchQuery,
-      currentUserId: user.uid,
-    });
-
-    setSearchResults(response.data);
-    setIsSearching(false);
-  } catch (error) {
-    console.error('Error searching for users:', error);
-    setIsSearching(false);
-  }
-};
-
-const handleLiveSearch = (query) => {
-  if (debounceTimeout.current) {
-    clearTimeout(debounceTimeout.current);
-  }
-
-  debounceTimeout.current = setTimeout(async () => {
-    if (query.trim() === '') {
-      setSearchResults([]);
-      return;
+  const handleLiveSearch = (query) => {
+    if (debounceTimeout.current) {
+      clearTimeout(debounceTimeout.current);
     }
 
-    setIsSearching(true);
+    debounceTimeout.current = setTimeout(() => {
+      if (query.trim() === '') {
+        setSearchResults([]);
+        return;
+      }
+      searchUsers(query);
+    }, 300);
+  };
+
+  const setFollowing = async (targetUserId, follow) => {
     try {
-      const response = await axios.post('https://geospotbackend.onrender.com/search', {
-        username: query,
-        currentUserId: user.uid, 
-      });
-      setSearchResults(response.data);
-    } catch (error) {
-      console.error('Error searching for users:', error);
-    } finally {
-      setIsSearching(false);
-    }
-  }, 300);
-};
-
-const handleFollow = async (targetUserId) => {
-  try {
-    const rawUser = await SecureStore.getItemAsync('user');
-    if (!rawUser) {
-      console.warn("No user found in SecureStore.");
-      return;
-    }
-
-    const parsedUser = JSON.parse(rawUser);
-    const currentUserId = parsedUser.uid;
-
-    if (!currentUserId || !targetUserId) {
-      console.error('Missing currentUserId or targetUserId');
-      return;
-    }
-
-    const response = await axios.post('https://geospotbackend.onrender.com/follow', {
-      currentUserId,
-      targetUserId,
-    });
-
-    if (response.data.message === "Followed successfully") {
-      console.log("Followed successfully!");
-
-      setIsFollowingViewedUser(true);
+      await api(follow ? '/follow' : '/unfollow', { method: 'POST', body: { targetUserId } });
 
       setSearchResults(prevResults =>
         prevResults.map(result =>
-          result.uid === targetUserId ? { ...result, isFollowing: true } : result
+          result.uid === targetUserId ? { ...result, isFollowing: follow } : result
         )
       );
 
-      // Refresh viewed user's info
-      const updatedViewedUser = await axios.post("https://geospotbackend.onrender.com/UserProfilePage", {
-        email: viewedEmail,
-      });
+      if (targetUserId === user?.uid) {
+        setIsFollowingViewedUser(follow);
+      }
+      setUser(await loadProfile(viewedEmail));
+    } catch (err) {
+      reportError(follow ? 'Error following user:' : 'Error unfollowing user:', err);
+    }
+  };
 
-      setUser(updatedViewedUser.data);
+  const handleFollow = (targetUserId) => setFollowing(targetUserId, true);
+  const handleUnfollow = (targetUserId) => setFollowing(targetUserId, false);
+
+  const handleLogout = async () => {
+    await clearSession();
+    navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
+  };
+
+  const goToOwnProfile = async () => {
+    const currentUser = await getSessionUser();
+    if (currentUser) {
+      navigation.navigate("UserProfilePage", { email: currentUser.email });
     } else {
-      console.warn("Unexpected response from server:", response.data);
+      navigation.replace("Login");
     }
-  } catch (error) {
-    console.error("Error sending follow request:", error);
+  };
+
+  if (!viewedEmail) {
+    return <Text>No email provided.</Text>;
   }
-};
 
-
-const handleUnfollow = async (targetUserId) => {
-  try {
-    const rawUser = await SecureStore.getItemAsync('user');
-    if (!rawUser) {
-      console.warn("No user found in SecureStore.");
-      return;
-    }
-
-    const parsedUser = JSON.parse(rawUser);
-    const currentUserId = parsedUser.uid;
-
-    const response = await axios.post('https://geospotbackend.onrender.com/unfollow', {
-      currentUserId,
-      targetUserId,
-    });
-
-    if (response.data.message === "Unfollowed successfully") {
-      setIsFollowingViewedUser(false);
-
-      setSearchResults(prevResults =>
-        prevResults.map(result =>
-          result.uid === targetUserId ? { ...result, isFollowing: false } : result
-        )
-      );
-
-      // Refresh viewed user
-      const updatedViewedUser = await axios.post("https://geospotbackend.onrender.com/UserProfilePage", {
-        email: viewedEmail,
-      });
-
-      setUser(updatedViewedUser.data);
-    }
-  } catch (error) {
-    console.error("Error unfollowing user:", error);
-  }
-};
-
-const handleLogout = async () => {
-  try {
-    await SecureStore.deleteItemAsync('user');
-    await AsyncStorage.removeItem('userUid');
-    navigation.replace('Login');
-  } catch (error) {
-    console.error("Error during logout:", error);
-  }
-};
-
-  
   if (loading) {
-    return <Text>Loading...</Text>;
+    return (
+      <View style={styles.statusContainer}>
+        <ActivityIndicator size="large" color="#68d391" />
+        <Text style={styles.statusText}>Loading profile...</Text>
+      </View>
+    );
   }
-  console.log(user);
   if (error) {
-    return <Text>{error}</Text>;
+    return (
+      <View style={styles.statusContainer}>
+        <Text style={styles.statusText}>{error}</Text>
+        <TouchableOpacity style={styles.retryButton} onPress={() => { setLoading(true); fetchUserData(); }}>
+          <Text style={styles.retryButtonText}>Try Again</Text>
+        </TouchableOpacity>
+      </View>
+    );
   }
   return (
     <ScrollView style={styles.container}>
@@ -355,20 +234,7 @@ const handleLogout = async () => {
 <View style={{ flexDirection: 'row', justifyContent: 'flex-start', marginTop: 20, marginBottom: 10 }}>
 
   {!isOwnProfile ? (
-    <TouchableOpacity onPress={async () => {
-      try {
-        const rawUser = await SecureStore.getItemAsync('user');
-        if (rawUser) {
-          const parsedUser = JSON.parse(rawUser);
-          navigation.navigate("UserProfilePage", { email: parsedUser.email });
-        } else {
-          console.warn("No user in SecureStore, redirecting to Login");
-          navigation.replace("Login");
-        }
-      } catch (error) {
-        console.error("Error navigating back to own profile:", error);
-      }
-    }}>
+    <TouchableOpacity onPress={goToOwnProfile}>
       <Ionicons name="arrow-back-outline" size={30} color="#68d391" />
     </TouchableOpacity>
   ) : (
@@ -383,7 +249,7 @@ const handleLogout = async () => {
       {/* Profile Section */}
       <View style={styles.profileContainer}>
         <Image 
-          source={{ uri: user.profilePicture || 'https://res.cloudinary.com/dbmpdoet6/image/upload/v1744226231/jxz9tcyulimodvceq47f.png' }} 
+          source={avatarImage(user.profilePicture)} 
           style={styles.profilePicture} 
         />
         
@@ -494,13 +360,13 @@ const handleLogout = async () => {
           <View style={styles.petImageContainer}>
             {/* Background Image */}
             <Image 
-              source={{ uri: "https://res.cloudinary.com/dbmpdoet6/image/upload/v1744232304/d8qvvsonsrd3em0asyn5.png" }} 
+              source={PET_BACKGROUND} 
               style={styles.backgroundImage} 
             />
             
             {/* Pet Image */}
             <Image 
-              source={{ uri: user.pet || "https://res.cloudinary.com/dbmpdoet6/image/upload/v1744230983/kispd3yrq5srohe7igiq.png" }}
+              source={petImage(user.pet)}
               style={styles.petImage}
             />
           </View>
@@ -605,37 +471,7 @@ const handleLogout = async () => {
           {/* Save Button */}
           <TouchableOpacity
             style={styles.saveButton}
-            onPress={() => {
-              axios.post('https://geospotbackend.onrender.com/updateProfile', {
-                email: viewedEmail,
-                username: usernameInput,
-                bio: bioInput
-              })
-              .then(response => {
-                console.log('Profile updated successfully');
-            
-                setUser(prev => ({
-                  ...prev,
-                  username: usernameInput,
-                  bio: bioInput
-                }));
-            
-                setEditProfileModalVisible(false);
-              
-                setTimeout(() => {
-                  axios.post("https://geospotbackend.onrender.com/UserProfilePage", { email: viewedEmail })
-                    .then((result) => {
-                      setUser(result.data);
-                      setBioInput(result.data.bio || '');
-                      setUsernameInput(result.data.username || '');
-                    })
-                    .catch(err => {
-                      console.error("Error refreshing user after update:", err);
-                    });
-                }, 1000); 
-              })
-              .catch(error => console.error('Error updating profile:', error));
-            }}
+            onPress={handleSaveProfile}
         
       >
         <Text style={{ color: "white", fontWeight: "bold" }}>Save</Text>
@@ -703,13 +539,13 @@ const handleLogout = async () => {
       <View style={styles.petModalImageContainer}>
         {/* Background Image */}
         <Image 
-          source={{ uri: "https://res.cloudinary.com/dbmpdoet6/image/upload/v1744232304/d8qvvsonsrd3em0asyn5.png" }} 
+          source={PET_BACKGROUND} 
           style={styles.petModalBackgroundImage}
         />
         
         {/* Pet Image */}
         <Image
-          source={{ uri: user.pet || "https://res.cloudinary.com/dbmpdoet6/image/upload/v1744230983/kispd3yrq5srohe7igiq.png" }}
+          source={petImage(user.pet)}
           style={styles.petModalPetImage}
         />
       </View>
@@ -945,6 +781,30 @@ const handleLogout = async () => {
 };
 
 const styles = StyleSheet.create({
+  statusContainer: {
+    flex: 1,
+    backgroundColor: '#2d3748',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  statusText: {
+    color: '#e2e8f0',
+    fontSize: 16,
+    marginTop: 12,
+    textAlign: 'center',
+  },
+  retryButton: {
+    backgroundColor: '#48bb78',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    marginTop: 16,
+  },
+  retryButtonText: {
+    color: '#1a202c',
+    fontWeight: 'bold',
+  },
   container: {
     flex: 1,
     backgroundColor: "#2d3748",

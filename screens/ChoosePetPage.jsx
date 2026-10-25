@@ -1,29 +1,11 @@
 import React, { useState } from "react";
 import { View, Text, TouchableOpacity, StyleSheet, Alert, Image, FlatList } from "react-native";
 import { useNavigation, useRoute } from "@react-navigation/native"; 
-import axios from 'axios';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { api } from '../api';
+import { PET_IDS, petImage } from '../images';
 
 
 
-const monsterImages = [
-  "https://res.cloudinary.com/dbmpdoet6/image/upload/v1744230983/kispd3yrq5srohe7igiq.png",
-  "https://res.cloudinary.com/dbmpdoet6/image/upload/v1744230983/ge9k5tou73ewuklcqm50.png",
-  "https://res.cloudinary.com/dbmpdoet6/image/upload/v1744230983/febrt8lvztd9bdvcevvj.png",
-  "https://res.cloudinary.com/dbmpdoet6/image/upload/v1744230983/vuq0uiogmwpwphu3ojjv.png",
-  "https://res.cloudinary.com/dbmpdoet6/image/upload/v1744230983/as5jwm7hmqfjspkwa3ng.png",
-  "https://res.cloudinary.com/dbmpdoet6/image/upload/v1744230983/d8igeytxubnh7uzxtloy.png",
-  "https://res.cloudinary.com/dbmpdoet6/image/upload/v1744230984/cd0bu5tv2hjpdnkhqpt0.png",
-  "https://res.cloudinary.com/dbmpdoet6/image/upload/v1744230984/eetdplixjfmwc9x3rswt.png",
-  "https://res.cloudinary.com/dbmpdoet6/image/upload/v1744230984/o0jznyskonwlv760motq.png",
-  "https://res.cloudinary.com/dbmpdoet6/image/upload/v1744230984/gjtdrsiqb2ayh1fgypp7.png",
-  "https://res.cloudinary.com/dbmpdoet6/image/upload/v1744230984/mbz3e9xlteajf4c4amet.png",
-  "https://res.cloudinary.com/dbmpdoet6/image/upload/v1744230984/bppokd0ezyxaszydnsij.png",
-  "https://res.cloudinary.com/dbmpdoet6/image/upload/v1744230984/iaki2kcykalwspdupf3u.png",
-  "https://res.cloudinary.com/dbmpdoet6/image/upload/v1744230984/gsljngkr400tywz3ailf.png",
-  "https://res.cloudinary.com/dbmpdoet6/image/upload/v1744230984/fedgeubk3m8yr8qjqbac.png",
-  "https://res.cloudinary.com/dbmpdoet6/image/upload/v1744230993/grrisvojafjgzctdpxu5.png",
-];
 
 const ITEMS_PER_PAGE = 9; 
 
@@ -34,7 +16,7 @@ const ChoosePetPage = () => {
   const [currentPage, setCurrentPage] = useState(0);
   const navigation = useNavigation();  
 
-  const totalPages = Math.ceil(monsterImages.length / ITEMS_PER_PAGE);
+  const totalPages = Math.ceil(PET_IDS.length / ITEMS_PER_PAGE);
 
   const handleSelectPet = (index) => {
     setSelectedPet(index);
@@ -43,20 +25,10 @@ const ChoosePetPage = () => {
   const handleConfirmPet = async () => {
     if (selectedPet !== null) {
       try {
-        const chosenPetImageURL = monsterImages[selectedPet];  
+        const chosenPet = PET_IDS[selectedPet];
+        await api('/savePet', { method: 'POST', body: { selectedPet: chosenPet } });
   
-        console.log("Chosen pet URL:", chosenPetImageURL);
-  
-        await axios.post('https://geospotbackend.onrender.com/savePet', {
-          email: email,
-          selectedPet: chosenPetImageURL,   
-          petLevel: 1,
-          petName: "No Name",
-          petCurrency: 0
-        
-        });
-  
-        navigation.navigate("ProfileCreationCompletePage", { email, pet: chosenPetImageURL }); 
+        navigation.navigate("ProfileCreationCompletePage", { email, pet: chosenPet }); 
   
       } catch (error) {
         console.error("Error saving pet:", error);
@@ -81,7 +53,7 @@ const ChoosePetPage = () => {
 
   const startIndex = currentPage * ITEMS_PER_PAGE;
   const endIndex = startIndex + ITEMS_PER_PAGE;
-  const currentMonsters = monsterImages.slice(startIndex, endIndex);
+  const currentMonsters = PET_IDS.slice(startIndex, endIndex);
 
   const renderItem = ({ item, index }) => {
     const globalIndex = startIndex + index;
@@ -93,7 +65,7 @@ const ChoosePetPage = () => {
           selectedPet === globalIndex && styles.selectedPet,
         ]}
       >
-        <Image source={{ uri: item }} style={styles.petImage} />
+        <Image source={petImage(item)} style={styles.petImage} />
         <Text style={styles.petLabel}>Monster {globalIndex + 1}</Text>
       </TouchableOpacity>
     );
@@ -107,7 +79,7 @@ const ChoosePetPage = () => {
       <FlatList
         data={currentMonsters}
         renderItem={renderItem}
-        keyExtractor={(_, index) => index.toString()}
+        keyExtractor={(item) => item}
         numColumns={3}
         contentContainerStyle={styles.petOptionsContainer}
       />

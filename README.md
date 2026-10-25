@@ -3,24 +3,16 @@
 
 ---
 
-## Backend Setup (Render)
+## Backend Setup (Render + MongoDB Atlas)
 
-We’re hosting the backend on **Render**, so you don’t need to run it locally.
-NOTE that the server goes to sleep when there is no activity so initial log in may take slightly longer. Please be patient.
+The API runs on a free Render service backed by a free MongoDB Atlas database. Photos are stored in the database, and the map uses your phone's maps app for directions, so there are no other accounts or API keys.
 
-### Steps:
+1. **MongoDB Atlas:** create a free M0 cluster and a database user. Under Network Access allow `0.0.0.0/0` (Render's free tier has no fixed IP). Copy the connection string.
+2. **Render:** New > Blueprint > pick this repo. It reads `render.yaml`, asks for `MONGO_URI` (paste the Atlas string), and generates `JWT_SECRET`. Leave `SMTP_URL`/`MAIL_FROM` empty unless you want password reset emails (see `backend/.env.example`).
+3. The first start adds the seed locations. Render redeploys on every push to `main`.
+4. The app uses `https://geospot-kassasana.onrender.com` by default (`api.js`). If Render gives the service a different URL, change it there.
 
-1. Go to our [Render Dashboard](https://dashboard.render.com/) and log in.
-2. Locate the `geospotbackend` service.
-3. Click **"Deploy latest commit"** to update the backend with the latest code.
-4. Wait for the deployment logs to show **“Live”** — this means the backend is running.
-
-### Backend API URL:
-```
-https://geospotbackend.onrender.com
-```
-
-> This is already integrated into the frontend fetch calls.
+The free service sleeps after ~15 minutes idle, so the first request after that takes up to a minute.
 
 ---
 
@@ -30,11 +22,9 @@ You’ll be running the frontend using **Expo Go** on your phone or using the we
 
 ### 🔧 Initial Setup (One-Time)
 
-> If you haven’t already:
+Use **Node 24** (see `.nvmrc`; Node 22.13+ also works). No global Expo install is needed — `npx expo` uses the project's own version.
 
-```bash
-npm install -g expo-cli
-```
+The app targets **Expo SDK 58**, so install the current **Expo Go** from the App Store / Play Store.
 
 ---
 
@@ -76,9 +66,20 @@ npm install -g expo-cli
 
 ---
 
+## Development
+
+- `npm run check` lints the app and backend and runs the backend tests (they use an in-memory MongoDB, so no database is needed).
+- GitHub Actions (`.github/workflows/check.yml`) runs `npm run check` and an Android bundle build on every pull request and every push to `main`.
+- Quickest local setup: `cd backend && npm run dev:memory` starts the API with a throwaway in-memory database and the seed locations. Then run the app with `EXPO_PUBLIC_API_URL=http://<your computer's IP>:3000 npx expo start` (or `npx expo start --web` with `http://localhost:3000`).
+- To run the API against a real database: copy `backend/.env.example` to `backend/.env`, fill it in, then `cd backend && npm install && npm run dev`.
+- `cd backend && npm run seed` replaces the map locations with the seed list (a new database gets them automatically).
+- The daily spot rotates through locations with `isActive: true` and is revealed at 9:00 Gainesville time.
+
+---
+
 ## Troubleshooting Tips
 
-- **Backend not working?** Make sure you clicked **Deploy latest commit** on Render.
+- **Backend not working?** Check the service's logs on Render; it needs `MONGO_URI` set and Atlas network access open.
 - **Can’t scan the QR?** Ensure your phone and laptop are on the **same Wi-Fi**, and you’re using **Tunnel mode** (`--tunnel`).
 
 ---

@@ -1,11 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal, Alert } from 'react-native';
 import MapView, { Marker, Polyline } from 'react-native-maps';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
-import polyline from '@mapbox/polyline';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as SecureStore from 'expo-secure-store';
+import { useNavigation } from '@react-navigation/native';
+import { api, handleAuthError, uploadImage } from '../api';
+import { fetchTodaysSpot, formatCountdown, openWalkingDirections, REFETCH_INTERVAL_MS } from '../todaysSpot';
 
 function getDistanceInMiles(lat1, lon1, lat2, lon2) {
   const toRad = (value) => (value * Math.PI) / 180;
@@ -24,57 +24,30 @@ function getDistanceInMiles(lat1, lon1, lat2, lon2) {
 
 
 const MapScreen = () => {
+  const navigation = useNavigation();
   const [location, setLocation] = useState(null);
-  const [destination, setDestination] = useState({
-    latitude: 29.650506721915335,
-    longitude: -82.34286694879195,
-  });
-  const [isRevealed, setIsRevealed] = useState(false);
-  const [timeUntilReveal, setTimeUntilReveal] = useState('');
+  const [today, setToday] = useState(null);
+  const [testSpot, setTestSpot] = useState(null);
+  const [statusMessage, setStatusMessage] = useState(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [now, setNow] = useState(() => Date.now());
   const [modalVisible, setModalVisible] = useState(false);
-  const [hintText, setHintText] = useState('This is your hint! 🌟');
-  const [routeCoords, setRouteCoords] = useState([]);
-  const [user, setUser] = useState(null);
-  const [customRevealTime, setCustomRevealTime] = useState(null);
-  const [availableLocations, setAvailableLocations] = useState([]);
-  const [distanceToDestination, setDistanceToDestination] = useState(null);
-  const [isUsingCachedData, setIsUsingCachedData] = useState(false);
   const [offlineMode, setOfflineMode] = useState(false);
   const [offlineModalVisible, setOfflineModalVisible] = useState(false);
   const [lastCacheUpdateTime, setLastCacheUpdateTime] = useState(null);
+  const lastFetchAt = useRef(0);
+
+  const spot = testSpot ?? today?.spot ?? null;
+  const isRevealed = Boolean(spot);
+  const destination = useMemo(
+    () => (spot ? { latitude: spot.coordinates.lat, longitude: spot.coordinates.lng } : null),
+    [spot]
+  );
 
   const isNearDestination = location && destination && (
     Math.abs(location.latitude - destination.latitude) < 0.001 &&
     Math.abs(location.longitude - destination.longitude) < 0.001
   );
-
-  // Function to cache locations data
-  const cacheLocations = async (locations) => {
-    try {
-      await AsyncStorage.setItem('cachedLocations', JSON.stringify(locations));
-      await AsyncStorage.setItem('locationsCacheTime', new Date().toISOString());
-      console.log('Locations cached successfully');
-    } catch (error) {
-      console.error('Error caching locations:', error);
-    }
-  };
-
-  // Function to get cached locations
-  const getCachedLocations = async () => {
-    try {
-      const cachedData = await AsyncStorage.getItem('cachedLocations');
-      const cacheTime = await AsyncStorage.getItem('locationsCacheTime');
-      
-      if (cachedData) {
-        setLastCacheUpdateTime(cacheTime ? new Date(cacheTime) : null);
-        return JSON.parse(cachedData);
-      }
-      return null;
-    } catch (error) {
-      console.error('Error retrieving cached locations:', error);
-      return null;
-    }
-  };
 
   useEffect(() => {
     (async () => {
@@ -88,166 +61,56 @@ const MapScreen = () => {
     })();
   }, []);
 
-  useEffect(() => {
-    if (location && destination) {
-      const miles = getDistanceInMiles(
-        location.latitude,
-        location.longitude,
-        destination.latitude,
-        destination.longitude
-      );
-      setDistanceToDestination(miles);
-    }
-  }, [location, destination]);
+  const distanceToDestination = location && destination
+    ? getDistanceInMiles(location.latitude, location.longitude, destination.latitude, destination.longitude)
+    : null;
 
   useEffect(() => {
-    const fetchLocations = async () => {
-      try {
-        // Try to fetch from API first
-        const res = await fetch('https://geospotbackend.onrender.com/api/locations');
-        const data = await res.json();
-        console.log('📍 Available locations:', data);
-        
-        if (!data || data.length === 0) {
-          throw new Error('No locations returned from API');
-        }
-        
-        // Cache the fresh data
-        await cacheLocations(data);
-        setAvailableLocations(data);
-        setIsUsingCachedData(false);
-        setOfflineMode(false);
-        
-      } catch (err) {
-        console.error('Failed to fetch locations:', err);
-        
-        // If API fetch fails, try to use cached data
-        const cachedLocations = await getCachedLocations();
-        if (cachedLocations && cachedLocations.length > 0) {
-          console.log('Using cached locations data:', cachedLocations);
-          setAvailableLocations(cachedLocations);
-          setIsUsingCachedData(true);
-          setOfflineMode(true);
-          setOfflineModalVisible(true);
-        } else {
-          console.log('No cached data available, using fallback locations');
-          // Use a set of default locations as fallback
-          const fallbackLocations = [
-            {
-              name: "University of Florida",
-              description: "The University of Florida campus in Gainesville.",
-              coordinates: {
-                lat: 29.643946,
-                lng: -82.350482
-              }
-            },
-            {
-              name: "Ben Hill Griffin Stadium",
-              description: "The Swamp - Home of the Florida Gators football team.",
-              coordinates: {
-                lat: 29.650180,
-                lng: -82.347850
-              }
-            }
-          ];
-          
-          setAvailableLocations(fallbackLocations);
-          setIsUsingCachedData(true);
-          setOfflineMode(true);
-          setOfflineModalVisible(true);
-          
-          // Set destination to a fallback location
-          const randomLocation = fallbackLocations[Math.floor(Math.random() * fallbackLocations.length)];
-          setDestination({
-            latitude: randomLocation.coordinates.lat,
-            longitude: randomLocation.coordinates.lng
-          });
-          setHintText(randomLocation.description || 'No hint available');
-        }
-      }
+    let active = true;
+    lastFetchAt.current = Date.now();
+    fetchTodaysSpot()
+      .then((result) => {
+        if (!active) return;
+        setToday(result.today);
+        setOfflineMode(result.offline);
+        setOfflineModalVisible(result.offline);
+        setLastCacheUpdateTime(result.cachedAt ? new Date(result.cachedAt) : null);
+        setStatusMessage(result.message ?? null);
+      })
+      .catch((error) => handleAuthError(error, navigation));
+    return () => {
+      active = false;
     };
-  
-    fetchLocations();
-  }, []);
+  }, [refreshKey, navigation]);
 
-  // Refresh data function
-  const handleRefreshData = async () => {
-    try {
-      setOfflineMode(false);
-      const res = await fetch('https://geospotbackend.onrender.com/api/locations');
-      const data = await res.json();
-      
-      if (!data || data.length === 0) {
-        throw new Error('No locations returned from API');
+  const handleRefreshData = () => setRefreshKey((key) => key + 1);
+
+  // Tick the countdown, and ask the server for the spot once its reveal time has passed
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const current = Date.now();
+      setNow(current);
+      const waitingForReveal = today && !today.spot && current >= Date.parse(today.revealAt);
+      if (waitingForReveal && current - lastFetchAt.current >= REFETCH_INTERVAL_MS) {
+        setRefreshKey((key) => key + 1);
       }
-      
-      await cacheLocations(data);
-      setAvailableLocations(data);
-      setIsUsingCachedData(false);
-      setOfflineModalVisible(false);
-      Alert.alert('Connected', 'Successfully refreshed data from server');
-      
-    } catch (err) {
-      console.error('Failed to refresh data:', err);
-      Alert.alert('Still Offline', 'Could not connect to server. Using cached data.');
-    }
-  };
-
-  useEffect(() => {
-    if (isRevealed && location && destination) {
-      fetchRoute();
-    }
-  }, [isRevealed, location, destination]); 
-  
-  useEffect(() => {
-    if (!isRevealed) {
-      setRouteCoords([]);
-    }
-  }, [isRevealed]);
-  
-
-  useEffect(() => {
-    const updateTimer = () => {
-      const now = new Date();
-      const revealTime = customRevealTime ?? (() => {
-        const defaultTime = new Date();
-        defaultTime.setHours(9, 0, 0, 0);
-        return defaultTime;
-      })();
-  
-      if (now >= revealTime) {
-        if (!isRevealed) setIsRevealed(true); 
-        setTimeUntilReveal("📍 Today's spot is revealed!");
-      } else {
-        const diff = revealTime - now;
-        const hrs = Math.floor(diff / (1000 * 60 * 60));
-        const mins = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-        const secs = Math.floor((diff % (1000 * 60)) / 1000);
-        setTimeUntilReveal(`🕒 ${hrs}:${mins}:${secs} until reveal`);
-      }
-      
-    };
-  
-    updateTimer();
-    const interval = setInterval(updateTimer, 1000);
+    }, 1000);
     return () => clearInterval(interval);
-  }, [customRevealTime]);
-  
+  }, [today]);
 
-  useEffect(() => {
-    const fetchUser = async () => {
-      try {
-        if (!user) {
-          const storedUser = await AsyncStorage.getItem('user');
-          if (storedUser) setUser(JSON.parse(storedUser));
-          else console.warn('⚠️ No user stored in AsyncStorage');
-        }
-      } catch (err) {
-        console.error('Failed to load user from storage:', err);
-      }
-    };
-    fetchUser();
-  }, []);
+  let revealLabel;
+  if (testSpot) {
+    revealLabel = `🧪 Test spot: ${testSpot.name}`;
+  } else if (spot) {
+    revealLabel = "📍 Today's spot is revealed!";
+  } else if (today) {
+    const remaining = Date.parse(today.revealAt) - now;
+    revealLabel = remaining > 0
+      ? `🕒 ${formatCountdown(remaining)} until reveal`
+      : "📍 Revealing today's spot...";
+  } else {
+    revealLabel = statusMessage || "Loading today's spot...";
+  }
 
   const handlePickImage = async () => {
     try {
@@ -257,156 +120,42 @@ const MapScreen = () => {
         return;
       }
 
-      const result = await ImagePicker.launchCameraAsync({ allowsEditing: true, quality: 0.7, base64: true });
-      if (!result.cancelled) {
-        const asset = result.assets?.[0];
-        if (!asset || !asset.base64) {
-          Alert.alert("Error", "Image capture failed or base64 not found.");
-          return;
-        }
+      const result = await ImagePicker.launchCameraAsync({ allowsEditing: true });
+      if (result.canceled) return;
 
-        const base64Image = `data:image/jpeg;base64,${asset.base64}`;
-        const uploadResponse = await fetch('https://geospotbackend.onrender.com/uploadPhoto', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ image: base64Image }),
-        });
+      const { imageUrl } = await uploadImage('/uploadPhoto', result.assets[0]);
 
-        const uploadData = await uploadResponse.json();
-        const imageUrl = uploadData.imageUrl;
-        if (!imageUrl) return Alert.alert("Upload failed", "Could not get image URL.");
-
-        const userData = await SecureStore.getItemAsync('user');
-        const parsedUser = userData ? JSON.parse(userData) : null;
-        if (!parsedUser?.uid) return Alert.alert("Error", "Could not find your account info.");
-
-        const postResponse = await fetch('https://geospotbackend.onrender.com/createPost', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            userId: parsedUser.uid,
-            username: parsedUser.username,
-            imageUrl,
-            location: 'Gainesville',
-            description: 'Exploring the spot!'
-          }),
-        });
-        await postResponse.json();
-        Alert.alert("✅ Post created!", "Your photo has been uploaded.");
-      }
+      await api('/createPost', {
+        method: 'POST',
+        body: { imageUrl, location: 'Gainesville', description: `Found ${spot.name}!` },
+      });
+      Alert.alert("✅ Post created!", "Your photo has been uploaded.");
     } catch (err) {
-      console.error("❌ handlePickImage error:", err);
-      Alert.alert("Something went wrong", err.message || "Unknown error");
+      if (!(await handleAuthError(err, navigation))) {
+        console.error("handlePickImage error:", err);
+        Alert.alert("Something went wrong", err.message || "Unknown error");
+      }
     }
   };
 
+  // Development helpers (only rendered when __DEV__)
   const simulateArrival = () => {
-    setLocation(destination);
-    console.log('🔁 Teleported to destination:', destination);
+    if (destination) setLocation(destination);
   };
 
-  const fetchRoute = async () => {
-    if (!location || !destination) return;
-  
-    const origin = `${location.latitude},${location.longitude}`;
-    const dest = `${destination.latitude},${destination.longitude}`;
-    const GOOGLE_MAPS_API_KEY = 'AIzaSyCSV46SoFOq-rrbnV5V8VkPU3mVoZw-xHM';
-  
+  const pickRandomTestSpot = async () => {
     try {
-      const response = await fetch(
-        `https://maps.googleapis.com/maps/api/directions/json?origin=${origin}&destination=${dest}&mode=walking&key=${GOOGLE_MAPS_API_KEY}`
-      );
-      const data = await response.json();
-  
-      if (data.routes.length) {
-        const points = polyline.decode(data.routes[0].overview_polyline.points);
-        const coords = points.map(([lat, lng]) => ({ latitude: lat, longitude: lng }));
-  
-        // Animate the route in one by one
-        let current = [];
-        for (let i = 0; i < coords.length; i++) {
-          current.push(coords[i]);
-          setRouteCoords([...current]); // Force re-render
-          await new Promise((res) => setTimeout(res, 20)); // Adjust speed here
-        }
-      } else {
-        console.warn('No route found');
+      const locations = await api('/api/locations');
+      if (!locations.length) {
+        Alert.alert('No locations', 'Seed some with `npm run seed` in backend/.');
+        return;
       }
+      const next = locations[Math.floor(Math.random() * locations.length)];
+      setTestSpot({ name: next.name, description: next.description, coordinates: next.coordinates });
     } catch (err) {
-      console.error('Failed to fetch directions:', err);
+      Alert.alert('Could not load locations', err.message);
     }
   };
-  
-
-  const changeToRandomLocation = async () => {
-    if (availableLocations.length === 0) {
-      console.warn('⚠️ No available locations to switch to!');
-      return;
-    }
-  
-    try {
-      const loc = await Location.getCurrentPositionAsync({});
-      setLocation(loc.coords);
-  
-      const next = availableLocations[Math.floor(Math.random() * availableLocations.length)];
-      console.log('📍 Switching to location:', next);
-  
-      if (next?.coordinates?.lat && next?.coordinates?.lng) {
-        const newDestination = {
-          latitude: next.coordinates.lat,
-          longitude: next.coordinates.lng,
-        };
-  
-        setDestination(newDestination);
-        setIsRevealed(false);
-        setRouteCoords([]);
-        setHintText(next.description || 'No hint found for this location');
-        setCustomRevealTime(new Date(Date.now() + 5000)); // auto-reveal in 5 sec
-  
-        // ✅ Update distance manually
-        const miles = getDistanceInMiles(
-          loc.coords.latitude,
-          loc.coords.longitude,
-          next.coordinates.lat,
-          next.coordinates.lng
-        );
-        setDistanceToDestination(miles);
-  
-        Alert.alert("🔁 New destination set!", next.name);
-      } else {
-        console.warn('⚠️ Chosen location has invalid coordinates:', next);
-      }
-    } catch (error) {
-      console.error('❌ Error fetching current location:', error);
-      Alert.alert('Failed to get your current location. Please try again.');
-    }
-  };
-  
-  
-  
-
-  const revealDestinationNow = () => {
-    setIsRevealed(false); 
-    const in10Seconds = new Date(Date.now() + 10000);
-    setCustomRevealTime(in10Seconds);
-  
-    setTimeout(async () => {
-      setIsRevealed(true);
-  
-      // Wait until location is defined 
-      for (let i = 0; i < 5; i++) {
-        if (location && location.latitude && location.longitude) {
-          await fetchRoute();
-          break;
-        }
-        console.warn(`⏱ Waiting for location... try ${i + 1}`);
-        await new Promise((res) => setTimeout(res, 1000));
-      }
-    }, 10000);
-  };
-  
-  
-  
 
   if (!location) return <View style={styles.container}><Text>Loading map...</Text></View>;
 
@@ -436,20 +185,30 @@ const MapScreen = () => {
         showsUserLocation={true}
         followsUserLocation={true}
       >
-        {isRevealed && routeCoords.length > 0 && (
-          <Polyline coordinates={routeCoords} strokeColor="#00BFFF" strokeWidth={4} />
+        {isRevealed && (
+          <Polyline
+            coordinates={[{ latitude: location.latitude, longitude: location.longitude }, destination]}
+            strokeColor="#00BFFF"
+            strokeWidth={3}
+            lineDashPattern={[8, 6]}
+          />
         )}
         {isRevealed && (
-          <Marker coordinate={destination} title="Destination" pinColor="green" />
+          <Marker coordinate={destination} title={spot.name} pinColor="green" />
         )}
       </MapView>
 
       <View style={[styles.overlay, offlineMode && { top: 70 }]}>
-        <Text style={styles.revealLabel}>{timeUntilReveal}</Text>
+        <Text style={styles.revealLabel}>{revealLabel}</Text>
         {isRevealed && (
           <Text style={styles.distanceLabel}>
           📍 {distanceToDestination} miles away
           </Text>
+        )}
+        {isRevealed && (
+          <TouchableOpacity style={styles.directionsButton} onPress={() => openWalkingDirections(destination)}>
+            <Text style={styles.directionsButtonText}>🚶 Directions</Text>
+          </TouchableOpacity>
         )}
       </View>
 
@@ -467,23 +226,27 @@ const MapScreen = () => {
         </TouchableOpacity>
       )}
 
+      {__DEV__ && (
       <View style={styles.testButtonsContainer}>
-        <TouchableOpacity style={styles.testButton} onPress={revealDestinationNow}>
-          <Text style={styles.testButtonText}> Reveal Destination</Text>
+        <TouchableOpacity style={styles.testButton} onPress={pickRandomTestSpot}>
+          <Text style={styles.testButtonText}> Random Test Spot</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.testButton} onPress={simulateArrival}>
           <Text style={styles.testButtonText}> Teleport to Spot</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.testButton} onPress={changeToRandomLocation}>
-          <Text style={styles.testButtonText}> Change Test Location</Text>
-        </TouchableOpacity>
-
+        {testSpot && (
+          <TouchableOpacity style={styles.testButton} onPress={() => setTestSpot(null)}>
+            <Text style={styles.testButtonText}> Back to Today&apos;s Spot</Text>
+          </TouchableOpacity>
+        )}
       </View>
+      )}
 
       <Modal visible={modalVisible} animationType="slide" transparent>
         <View style={styles.modalContainer}>
           <View style={styles.modalContent}>
-            <Text style={styles.modalText}>{hintText}</Text>
+            <Text style={styles.modalTitle}>{spot?.name}</Text>
+            <Text style={styles.modalText}>{spot?.description || 'No hint for this spot yet.'}</Text>
             <TouchableOpacity onPress={() => setModalVisible(false)} style={styles.closeButton}>
               <Text style={{ color: '#fff', fontWeight: 'bold' }}>Close</Text>
             </TouchableOpacity>
@@ -501,7 +264,7 @@ const MapScreen = () => {
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Offline Mode</Text>
             <Text style={styles.modalText}>
-              Unable to connect to the server. Using cached location data.
+              Unable to connect to the server. Showing the last copy of today&apos;s spot, if there is one.
             </Text>
             {lastCacheUpdateTime && (
               <Text style={styles.cacheTimeText}>
@@ -576,6 +339,18 @@ const styles = StyleSheet.create({
     padding: 8,
     borderRadius: 15,
     overflow: 'hidden',
+  },
+  directionsButton: {
+    backgroundColor: '#00BFFF',
+    marginTop: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 15,
+  },
+  directionsButtonText: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: 'bold',
   },
   hintButton: {
     position: 'absolute',

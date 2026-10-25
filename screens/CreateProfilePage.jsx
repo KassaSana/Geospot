@@ -1,6 +1,7 @@
 import React, { useState } from "react";
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert } from "react-native";
+import { View, Text, TextInput, TouchableOpacity, StyleSheet } from "react-native";
 import { useNavigation, useRoute } from "@react-navigation/native";
+import { api } from "../api";
 
 const CreateProfilePage = () => {
   const route = useRoute();            
@@ -17,7 +18,7 @@ const CreateProfilePage = () => {
     setProfile({ ...profile, [field]: e });
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     const { firstName, lastName, birthday } = profile;
   
     if (!firstName || !lastName || !birthday) {
@@ -57,9 +58,17 @@ const CreateProfilePage = () => {
     }
   
     setError("");
-  
-    console.log("Profile created:", profile);
-    navigation.navigate("ChoosePetPage", { email: email });
+
+    const pad = (n) => String(n).padStart(2, "0");
+    try {
+      await api("/profileDetails", {
+        method: "POST",
+        body: { firstName, lastName, birthday: `${year}-${pad(month)}-${pad(day)}` },
+      });
+      navigation.navigate("ChoosePetPage", { email: email });
+    } catch (err) {
+      setError(err.message || "Could not save your profile. Please try again.");
+    }
   };
   
   
